@@ -427,11 +427,15 @@ local function ragebot_initialize(
     end
 
     local voidSpamDelay = 0.05
-    local voidSpamValue
-    local voidSpamHideValue
-    local voidSpamAttackOffset
+    local voidSpamValue = Toggles.ragebot_void_spam.Value
+    local voidSpamHideValue = Options.ragebot_void_spam_hide.Value
+    local voidSpamAttackOffset = Options.ragebot_void_spam_attack.Value
+    local voidSpamLastTick = tick()
+    local voidSpamFlip = false
     local function ragebot_store_value20(neutralValue1)
         voidSpamValue = neutralValue1
+        voidSpamFlip = false
+        voidSpamLastTick = tick() + (voidSpamAttackOffset or 0.1)
     end
     Toggles.ragebot_void_spam:OnChanged(ragebot_store_value20)
     local function ragebot_store_value21(neutralValue1)
@@ -444,14 +448,20 @@ local function ragebot_initialize(
     end
     Options.ragebot_void_spam_attack:OnChanged(ragebot_store_offset_value22)
 
-    local voidSpamLastTick = tick()
-    local voidSpamFlip = false
     local function ragebot_advance_worker_window()
-        if voidSpamValue and voidSpamLastTick < tick() then
-            voidSpamFlip = not voidSpamFlip
-            if not voidSpamFlip and voidSpamHideValue then
-                voidSpamLastTick = tick() + voidSpamHideValue
-            end
+        if not voidSpamValue then
+            voidSpamFlip = false
+            return false
+        end
+        local currentTick = tick()
+        if currentTick < voidSpamLastTick then
+            return voidSpamFlip
+        end
+        voidSpamFlip = not voidSpamFlip
+        if voidSpamFlip then
+            voidSpamLastTick = currentTick + (voidSpamHideValue or 0.25)
+        else
+            voidSpamLastTick = currentTick + (voidSpamAttackOffset or 0.1)
         end
         return voidSpamFlip
     end
@@ -4746,37 +4756,27 @@ local function directEntry(...)
                                     return lineClass[propertyName]
                                 end
                                 function lineClass:__newindex(propertyName, newValue)
-                                    if capturedCell8.current and (self.__OBJECT_EXISTS == true) then
-                                        if (26282 >= capturedCell1.current(8694)) and (26282 <= capturedCell1.current(8694)) then
-                                            local properties = self._properties
-                                            if capturedCell8.current and (properties[propertyName] == nil or properties[propertyName] == newValue or typeof(properties[propertyName]) ~= typeof(newValue)) then
-                                                return
-                                            end
-                                            properties[propertyName] = newValue
-                                            if propertyName == 'Color' then
-                                                self._frame.BackgroundColor3 = newValue
-                                            elseif propertyName == 'From' then
-                                                self:_updatePosition()
-                                            elseif propertyName == 'Thickness' then
-                                                self._frame.Size = udim2FromOffset(self._frame.AbsoluteSize.X, maxValue(newValue, 1))
-                                            elseif propertyName == 'To' then
-                                                self:_updatePosition()
-                                            elseif propertyName == 'Transparency' then
-                                                if capturedCell1.current(3864) ~= 13262 then
-                                                    while true do end
-                                                else
-                                                    self._frame.BackgroundTransparency = clamp(1 - newValue, 0, 1)
-                                                end
-                                            elseif propertyName == 'Visible' then
-                                                self._frame.Visible = newValue
-                                            elseif propertyName == 'ZIndex' then
-                                                self._frame.ZIndex = newValue
-                                            end
-                                        else
-                                            while true do end
+                                    if (self.__OBJECT_EXISTS == true) then
+                                        local properties = self._properties
+                                        properties[propertyName] = newValue
+                                        if propertyName == 'Color' then
+                                            self._frame.BackgroundColor3 = newValue
+                                        elseif propertyName == 'From' then
+                                            self:_updatePosition()
+                                        elseif propertyName == 'Thickness' then
+                                            self._frame.Size = udim2FromOffset(self._frame.AbsoluteSize.X, maxValue(newValue, 1))
+                                        elseif propertyName == 'To' then
+                                            self:_updatePosition()
+                                        elseif propertyName == 'Transparency' then
+                                            self._frame.BackgroundTransparency = clamp(1 - newValue, 0, 1)
+                                        elseif propertyName == 'Visible' then
+                                            self._frame.Visible = newValue
+                                        elseif propertyName == 'ZIndex' then
+                                            self._frame.ZIndex = newValue
                                         end
                                     end
                                 end
+                                
                                 function lineClass:__iter()
                                     return next, self._properties
                                 end
@@ -33169,7 +33169,14 @@ local function directEntry(...)
                                     local transparencyKeypoints = {}
                                     for index = 0, 9 do
                                         local position = index / 9
-                                        capturedValue3(transparencyKeypoints, capturedValue1(position, fadeProgress + ((1 - position) / 2)))
+                                        local fadeValue = fadeProgress + ((1 - position) / 2)
+                                        if fadeValue > 1 then
+                                            fadeValue = 1
+                                        end
+                                        if fadeValue < 0 then
+                                            fadeValue = 0
+                                        end
+                                        capturedValue3(transparencyKeypoints, capturedValue1(position, fadeValue))
                                     end
                                     local transparencySequence = capturedValue15(transparencyKeypoints)
                                     mainGradient.Transparency = transparencySequence
@@ -33177,8 +33184,13 @@ local function directEntry(...)
                                         outlineGradient.Transparency = transparencySequence
                                     end
                                 end
+                                local lineDelta = endScreenPosition - startScreenPosition
+                                if lineDelta.Magnitude < 0.5 then
+                                    outlineLine.Visible, mainLine.Visible = false, false
+                                    return
+                                end
                                 if showOutline then
-                                    local direction = (endScreenPosition - startScreenPosition).Unit
+                                    local direction = lineDelta.Unit
                                     outlineLine.To, outlineLine.From = endScreenPosition + direction, startScreenPosition - direction
                                     outlineLine.Visible = true
                                 else
@@ -38902,16 +38914,26 @@ local function directEntry(...)
                                             loopValue8.Visible = false
                                         end
                                     end
-                                    local localValue108 = #localValue22
                                     local localValue109 = function()
                                         local localValue110 = {}
-                                        local localValue111 = 0
-                                        for loopKey10, loopValue9 in localValue31(localValue32)do
-                                            localValue111 = localValue111 + 1
-                                            localValue110[loopKey10] = capturedCell3.current(loopKey10 ~= 'UpperTorso' and loopValue9.Position or (loopValue9.Position + capturedValue19(0, loopValue9.Size.Y / 3, 0)))
-                                        end
-                                        if (localValue111 ~= localValue108) then
-                                            return
+                                        for loopBoneIndex, loopBoneName in localValue22 do
+                                            local bonePart
+                                            if (localValue27) then
+                                                bonePart = localValue27:FindFirstChild(loopBoneName, true)
+                                            end
+                                            if (not bonePart) then
+                                                bonePart = localValue32[loopBoneName]
+                                            end
+                                            if (bonePart and bonePart:IsA('BasePart')) then
+                                                local bonePosition = bonePart.Position
+                                                if (loopBoneName == 'UpperTorso') then
+                                                    bonePosition = bonePosition + capturedValue19(0, bonePart.Size.Y / 2, 0)
+                                                end
+                                                local boneScreenPoint = capturedCell3.current(bonePosition)
+                                                if (boneScreenPoint) then
+                                                    localValue110[loopBoneName] = boneScreenPoint
+                                                end
+                                            end
                                         end
                                         return localValue110
                                     end
@@ -38927,16 +38949,24 @@ local function directEntry(...)
                                         for loopKey11, loopValue10 in localValue104 do
                                             local localValue113, localValue114 = localValue105[loopKey11], localValue105[loopKey11 + 13]
                                             local localValue115, localValue116 = localValue112[loopValue10[1] ], localValue112[loopValue10[2] ]
-                                            local localValue117 = (localValue115 - localValue116).Unit
-                                            localValue113.From, localValue113.To = localValue115 + localValue117, localValue116 - localValue117
-                                            if (espSkeletonOutline) then
-                                                local localValue118 = localValue117 * 2
-                                                localValue114.From, localValue114.To = localValue115 + localValue118, localValue116 - localValue118
-                                                localValue114.Visible = true
+                                            local localValue117
+                                            if (localValue115 and localValue116) then
+                                                localValue117 = (localValue115 - localValue116).Unit
+                                            end
+                                            if (localValue117 and localValue117.X == localValue117.X and localValue117.Y == localValue117.Y) then
+                                                localValue113.From, localValue113.To = localValue115 + localValue117, localValue116 - localValue117
+                                                if (espSkeletonOutline) then
+                                                    local localValue118 = localValue117 * 2
+                                                    localValue114.From, localValue114.To = localValue115 + localValue118, localValue116 - localValue118
+                                                    localValue114.Visible = true
+                                                else
+                                                    localValue114.Visible = false
+                                                end
+                                                localValue113.Visible = true
                                             else
+                                                localValue113.Visible = false
                                                 localValue114.Visible = false
                                             end
-                                            localValue113.Visible = true
                                         end
                                     end
                                 end
@@ -39155,6 +39185,9 @@ local function directEntry(...)
                                     localValue120, localValue121 = localValue28.Health, localValue28.MaxHealth
                                     for loopKey19, loopValue18 in localValue22 do
                                         local localValue165 = argument56:WaitForChild(loopValue18, capturedValue12)
+                                        if (not localValue165) then
+                                            continue
+                                        end
                                         local localValue166 = localValue165.Size / 2
                                         local localValue167, localValue168, localValue169 = localValue166.X, localValue166.Y, localValue166.Z
                                         localValue32[loopValue18], localValue33[localValue165] = localValue165, {
