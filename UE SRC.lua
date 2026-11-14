@@ -40802,71 +40802,97 @@ local function directEntry(...)
                                                                                                             playerState
                                                                                                         )
                                                                                                             local function aimbot_heartbeat_update(deltaTime)
-                                                                                                            if not activationState:GetState() then
+                                                                                                                if not activationState:GetState() then
                                                                                                                 return inactiveCallback()
-                                                                                                            end
-                                                                                                            local targetPart = targetState.part
-                                                                                                            if not targetPart then
+                                                                                                                end
+                                                                                                                local targetPart = targetState.part
+                                                                                                                if not targetPart then
                                                                                                                 return inactiveCallback()
-                                                                                                            end
-                                                                                                            local targetCharacter = targetState.character
-                                                                                                            if not targetCharacter then
+                                                                                                                end
+                                                                                                                local targetCharacter = targetState.character
+                                                                                                                if not targetCharacter then
                                                                                                                 return inactiveCallback()
-                                                                                                            end
-                                                                                                            local targetHumanoid = targetCharacter.Humanoid
-                                                                                                            if not targetHumanoid then
+                                                                                                                end
+                                                                                                                local targetHumanoid = targetCharacter.Humanoid
+                                                                                                                if not targetHumanoid then
                                                                                                                 return inactiveCallback()
-                                                                                                            end
-                                                                                                            local cameraFrame = cameraController:GetCameraCFrame()
-                                                                                                            local cameraPosition = cameraFrame.Position
-                                                                                                            local targetPosition = targetPart.Position
-                                                                                                            if axisMatchEnabled then
+                                                                                                                end
+                                                                                                                local frameTime = deltaTime
+                                                                                                                if type(frameTime) ~= "number" or frameTime ~= frameTime or frameTime < 0.001 then
+                                                                                                                frameTime = 0.001
+                                                                                                                end
+                                                                                                                if frameTime > 0.25 then
+                                                                                                                frameTime = 0.25
+                                                                                                                end
+                                                                                                                local optionsRoot = getfenv().Options
+                                                                                                                local togglesRoot = getfenv().Toggles
+                                                                                                                local cameraPercent = 0
+                                                                                                                if optionsRoot and optionsRoot.aimbot_smoothing then
+                                                                                                                cameraPercent = math.clamp(tonumber(optionsRoot.aimbot_smoothing.Value) or 0, 0, 100) / 100
+                                                                                                                end
+                                                                                                                local cameraTau = cameraPercent * 0.8
+                                                                                                                local cameraAlpha = 1
+                                                                                                                if cameraTau > 0.0001 then
+                                                                                                                cameraAlpha = 1 - math.exp(-frameTime / cameraTau)
+                                                                                                                end
+                                                                                                                local cameraFrame = cameraController:GetCameraCFrame()
+                                                                                                                local cameraPosition = cameraFrame.Position
+                                                                                                                local targetPosition = targetPart.Position
+                                                                                                                if axisMatchEnabled then
                                                                                                                 targetPosition = utilityRoot.utility:match_axis(targetPart, targetPosition, cameraFrame)
-                                                                                                            end
-                                                                                                            local aimPoint = targetPosition
-                                                                                                            if targetInterpolationEnabled then
+                                                                                                                end
+                                                                                                                local aimPoint = targetPosition
+                                                                                                                local delayPositionEnabled = togglesRoot and togglesRoot.aimbot_delay_position and togglesRoot.aimbot_delay_position.Value
+                                                                                                                if delayPositionEnabled and optionsRoot then
+                                                                                                                local horizontalPercent = 0
+                                                                                                                local verticalPercent = 0
+                                                                                                                if optionsRoot.aimbot_delay_smooth_x then
+                                                                                                                horizontalPercent = math.clamp(tonumber(optionsRoot.aimbot_delay_smooth_x.Value) or 0, 0, 100) / 100
+                                                                                                                end
+                                                                                                                if optionsRoot.aimbot_delay_smooth_y then
+                                                                                                                verticalPercent = math.clamp(tonumber(optionsRoot.aimbot_delay_smooth_y.Value) or 0, 0, 100) / 100
+                                                                                                                end
+                                                                                                                if airbornePredicate(targetHumanoid) and optionsRoot.aimbot_delay_smooth_jump then
+                                                                                                                verticalPercent = math.clamp(tonumber(optionsRoot.aimbot_delay_smooth_jump.Value) or 0, 0, 100) / 100
+                                                                                                                end
+                                                                                                                local horizontalTau = horizontalPercent * 0.45
+                                                                                                                local verticalTau = verticalPercent * 0.45
+                                                                                                                local horizontalAlpha = 1
+                                                                                                                if horizontalTau > 0.0001 then
+                                                                                                                horizontalAlpha = 1 - math.exp(-frameTime / horizontalTau)
+                                                                                                                end
+                                                                                                                local verticalAlpha = 1
+                                                                                                                if verticalTau > 0.0001 then
+                                                                                                                verticalAlpha = 1 - math.exp(-frameTime / verticalTau)
+                                                                                                                end
+                                                                                                                local cache = targetState.aimCache
                                                                                                                 local projectedPoint = cameraPosition + cameraFrame.LookVector * (cameraPosition - targetPosition).Magnitude
-                                                                                                                if cachedFighter ~= targetState.fighter then
-                                                                                                                    cachedAimPoint = projectedPoint
-                                                                                                                    cachedFighter = targetState.fighter
+                                                                                                                if not cache or cache.fighter ~= targetState.fighter or typeof(cache.point) ~= "Vector3" then
+                                                                                                                cache = { fighter = targetState.fighter, point = projectedPoint }
+                                                                                                                targetState.aimCache = cache
                                                                                                                 end
-                                                                                                                if (projectedPoint - targetPosition).Magnitude < (cachedAimPoint - targetPosition).Magnitude then
-                                                                                                                    cachedAimPoint = projectedPoint
+                                                                                                                if (projectedPoint - targetPosition).Magnitude < (cache.point - targetPosition).Magnitude then
+                                                                                                                cache.point = projectedPoint
                                                                                                                 end
-                                                                                                                local verticalSmoothingState
-                                                                                                                if airbornePredicate(targetHumanoid) then
-                                                                                                                    verticalSmoothingState = airborneSmoothingState
-                                                                                                                else
-                                                                                                                    verticalSmoothingState = groundedSmoothingState
+                                                                                                                local smoothedY = cache.point.Y + (targetPosition.Y - cache.point.Y) * verticalAlpha
+                                                                                                                local smoothedX = cache.point.X + (targetPosition.X - cache.point.X) * horizontalAlpha
+                                                                                                                local smoothedZ = cache.point.Z + (targetPosition.Z - cache.point.Z) * horizontalAlpha
+                                                                                                                aimPoint = vector3Constructor(smoothedX, smoothedY, smoothedZ)
+                                                                                                                cache.point = aimPoint
                                                                                                                 end
-                                                                                                                local smoothedY = interpolateAxis(
-                                                                                                                    cachedAimPoint.Y,
-                                                                                                                    targetPosition.Y,
-                                                                                                                    advanceSmoothing(verticalSmoothingState, deltaTime)
-                                                                                                                )
-                                                                                                                local interpolatedPoint = cachedAimPoint:Lerp(
-                                                                                                                    targetPosition,
-                                                                                                                    advanceSmoothing(aimPointSmoothingState, deltaTime)
-                                                                                                                )
-                                                                                                                aimPoint = vector3Constructor(interpolatedPoint.X, smoothedY, interpolatedPoint.Z)
-                                                                                                                cachedAimPoint = aimPoint
-                                                                                                            end
-                                                                                                            local aimedCameraFrame = cameraFrame:Lerp(
-                                                                                                                lookAtConstructor(cameraPosition, aimPoint),
-                                                                                                                advanceSmoothing(cameraSmoothingState, deltaTime)
-                                                                                                            )
-                                                                                                            if aimedCameraFrame == aimedCameraFrame then
+                                                                                                                local aimedCameraFrame = cameraFrame:Lerp(lookAtConstructor(cameraPosition, aimPoint), cameraAlpha)
+                                                                                                                if aimedCameraFrame == aimedCameraFrame then
                                                                                                                 cameraController:SetRotation(orientationConstructor(aimedCameraFrame:ToOrientation()))
                                                                                                                 local swayDelta = cameraDelta(cameraFrame, aimedCameraFrame)
                                                                                                                 local equippedItem = playerState.EquippedItem
                                                                                                                 if equippedItem then
-                                                                                                                    local viewModel = equippedItem.ViewModel
-                                                                                                                    if viewModel then
-                                                                                                                        viewModel._sway_spring.Value = viewModel._sway_spring.Value + swayDelta * 35
-                                                                                                                        cameraController._sway_spring.Value = cameraController._sway_spring.Value + swayDelta * 0.25
-                                                                                                                    end
+                                                                                                                local viewModel = equippedItem.ViewModel
+                                                                                                                if viewModel then
+                                                                                                                viewModel._sway_spring.Value = viewModel._sway_spring.Value + swayDelta * 35
+                                                                                                                cameraController._sway_spring.Value = cameraController._sway_spring.Value + swayDelta * 0.25
                                                                                                                 end
-                                                                                                            end
+                                                                                                                end
+                                                                                                                end
                                                                                                             end
                                                                                                             return aimbot_heartbeat_update
                                                                                                         end)(capturedValue16455_1, capturedValue16455_2, capturedValue16455_3, capturedValue16455_4, capturedCell16455_5.current, capturedValue16455_6, capturedCell16455_7.current, capturedCell16455_8.current, capturedCell16455_9.current, capturedValue16455_10, capturedValue16455_11, capturedValue16455_12, capturedCell16455_13.current, capturedCell16455_14.current, capturedCell16455_15.current, capturedValue16455_16, capturedValue16455_17, capturedCell16455_18.current, capturedValue16455_19, capturedValue16455_20, capturedCell16455_21.current)
@@ -45836,10 +45862,16 @@ local function directEntry(...)
                                 localSlot43_2 = capturedValue2
                                 return localSlot43_2(...)
                               else
-                                localSlot43_2 = capturedCell1.current
-                                localSlot43_3 = 4
-                                localSlot43_4 = "n"
-                                localSlot43_2 = localSlot43_2(localSlot43_3, localSlot43_4)
+                                localSlot43_2 = nil
+                                localSlot43_3 = 2
+                                while localSlot43_3 <= 14 do
+                                    localSlot43_4 = capturedCell1.current(localSlot43_3, "n")
+                                    if localSlot43_4 == "entity_added" then
+                                        localSlot43_2 = localSlot43_4
+                                        break
+                                    end
+                                    localSlot43_3 = localSlot43_3 + 1
+                                end
                                 if localSlot43_2 == "entity_added" then
                                   localSlot43_2 = capturedValue3
                                   localSlot43_3 = localSlot43_2
