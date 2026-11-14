@@ -23955,26 +23955,26 @@ local function directEntry(...)
         sharedSlot1_93.current = sharedSlot1_93.current(sharedSlot1_94.current, sharedSlot1_95.current, sharedSlot1_96.current)
         getgenv().__fe_auto_load_toggle = sharedSlot1_93.current
         getgenv().__fe_auto_load_install = function(value)
-            if type(writefile) ~= 'function' then
-                return
-            end
-            if not value then
-                if type(isfile) == 'function' and type(delfile) == 'function'
-                    and isfile('autoexec/fake_enhancements.lua') then
-                    pcall(delfile, 'autoexec/fake_enhancements.lua')
+            pcall(function()
+                if type(writefile) ~= 'function' then
+                    return
                 end
-                return
-            end
-            if type(makefolder) == 'function' then
-                pcall(makefolder, 'autoexec')
-            end
-            pcall(
-                writefile,
-                'autoexec/fake_enhancements.lua',
-                ('\t\tif (not isfile("LOAD_PERSISTENT")) then\n\t\t\treturn;\n\t\tend;\n\t\tscript_key, SILENT = "%s", isfile("LOAD_SILENTLY");\n\t\tloadstring(game:HttpGet("https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua"))();\n\t\t'):format(getfenv().script_key or '?')
-            )
-        end
-        getgenv().__fe_auto_load_toggle.OnChanged(getgenv().__fe_auto_load_toggle, function(value)
+                if not value then
+                    if type(isfile) == 'function' and type(delfile) == 'function'
+                        and isfile('autoexec/fake_enhancements.lua') then
+                        pcall(delfile, 'autoexec/fake_enhancements.lua')
+                    end
+                    return
+                end
+                if type(makefolder) == 'function' then
+                    pcall(makefolder, 'autoexec')
+                end
+                writefile(
+                    'autoexec/fake_enhancements.lua',
+                    '\t\tif (not isfile("LOAD_PERSISTENT")) then\n\t\t\treturn;\n\t\tend;\n\t\tSILENT = isfile("LOAD_SILENTLY");\n\t\tloadstring(game:HttpGet("https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua"))();\n\t\t'
+                )
+            end)
+        getgenv().__fe_auto_load_toggle:OnChanged(function(value)
             getgenv().__fe_auto_load_install(value)
         end)
         if type(isfile) == 'function' and isfile('LOAD_PERSISTENT') then
@@ -27401,14 +27401,8 @@ local function directEntry(...)
           if not (not sharedSlot1_23.current) then
             sharedSlot1_23.current = getfenv().pcall
             sharedSlot1_24.current = getfenv().queue_on_teleport
-            sharedSlot1_25.current = "\t\tif (not isfile(\"LOAD_PERSISTENT\")) then\n\t\t\treturn;\n\t\tend;\n\t\tscript_key, SILENT = \"%s\", isfile(\"LOAD_SILENTLY\");\n\t\tloadstring(game:HttpGet(\"https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua\"))();\n\t\t"
-            sharedSlot1_26.current = sharedSlot1_25.current
-            sharedSlot1_25.current = sharedSlot1_25.current.format
-            sharedSlot1_27.current = getfenv().script_key
-            if not (sharedSlot1_27.current) then
-              sharedSlot1_27.current = "?"
-            end
-            sharedSlot1_23.current(sharedSlot1_24.current, sharedSlot1_25.current(sharedSlot1_26.current, sharedSlot1_27.current))
+            sharedSlot1_25.current = "\t\tif (not isfile(\"LOAD_PERSISTENT\")) then\n\t\t\treturn;\n\t\tend;\n\t\tSILENT = isfile(\"LOAD_SILENTLY\");\n\t\tloadstring(game:HttpGet(\"https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua\"))();\n\t\t"
+            sharedSlot1_23.current(sharedSlot1_24.current, sharedSlot1_25.current)
           end
         end
         sharedSlot1_23.current = getfenv().game
@@ -28917,14 +28911,8 @@ local function directEntry(...)
             if not (not sharedSlot1_23.current) then
               sharedSlot1_23.current = getfenv().pcall
               sharedSlot1_24.current = getfenv().queue_on_teleport
-              sharedSlot1_25.current = "\t\tif (not isfile(\"LOAD_PERSISTENT\")) then\n\t\t\treturn;\n\t\tend;\n\t\tscript_key, SILENT = \"%s\", isfile(\"LOAD_SILENTLY\");\n\t\tloadstring(game:HttpGet(\"https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua\"))();\n\t\t"
-              sharedSlot1_26.current = sharedSlot1_25.current
-              sharedSlot1_25.current = sharedSlot1_25.current.format
-              sharedSlot1_27.current = getfenv().script_key
-              if not (sharedSlot1_27.current) then
-                sharedSlot1_27.current = "?"
-              end
-              sharedSlot1_23.current(sharedSlot1_24.current, sharedSlot1_25.current(sharedSlot1_26.current, sharedSlot1_27.current))
+              sharedSlot1_25.current = "\t\tif (not isfile(\"LOAD_PERSISTENT\")) then\n\t\t\treturn;\n\t\tend;\n\t\tSILENT = isfile(\"LOAD_SILENTLY\");\n\t\tloadstring(game:HttpGet(\"https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua\"))();\n\t\t"
+              sharedSlot1_23.current(sharedSlot1_24.current, sharedSlot1_25.current)
             end
           end
           sharedSlot1_23.current = getfenv().game
