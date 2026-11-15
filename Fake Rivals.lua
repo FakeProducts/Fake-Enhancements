@@ -276,9 +276,6 @@ local function ragebot_initialize(
     local renderBindingGuid = httpService:GenerateGUID()
     local snapshotP556Capture5 = renderBindingGuid
 
-    -- A re-executed chunk used to stack these three connections and the render
-    -- binding, so the ragebot stepped twice per frame. Cut the previous run's
-    -- handles before wiring this one.
     local ragebotSharedEnvironment = getfenv().getgenv()
     local ragebotConnections = {}
     local ragebotRenderBindings = {}
@@ -525,7 +522,7 @@ local function ragebot_initialize(
 
     local knifeLastTarget
     local knifeAttackReadyAt = 0
-    local workerInterval = 0.5
+    local workerInterval = 0.15
     local snapshotP566Capture2 = ragebot_store_value3
     local snapshotP566Capture6 = workerInterval
     local snapshotP566Capture10 = useItemRemote
@@ -542,7 +539,7 @@ local function ragebot_initialize(
         end
         if ragebot_advance_worker_window() then
             snapshotP566Capture2(selectedAttackResolver())
-            return "hiding..."
+            return ragebot_void_spam_status("hiding...")
         end
         local currentTime = tick()
         if targetPart ~= knifeLastTarget and knifeAttackReadyAt < currentTime then
@@ -576,12 +573,12 @@ local function ragebot_initialize(
             neutralDependency13(snapshotP566Capture10, item:Get("ObjectID"), neutralDependency14:ToEnum("StartAiming"), encodedArguments, nil)
             knifeAttackReadyAt = tick() + item.Info.HeavyAttackCooldown * 0.75
             snapshotP566Capture2(selectedAttackResolver())
-            return "backstabbing " .. targetName .. "..."
+            return ragebot_void_spam_status("backstabbing " .. targetName .. "...")
         end
         if knifeAttackReadyAt < currentTime + neutralDependency16(deltaTime, snapshotP566Capture15) then
             snapshotP566Capture2(encodedAimPosition * neutralDependency17(0, neutralDependency10() / 10, 0))
             neutralDependency18(attackTransform, true)
-            return "backstabbing " .. targetName .. "..."
+            return ragebot_void_spam_status("backstabbing " .. targetName .. "...")
         end
         snapshotP566Capture2(selectedAttackResolver())
         return "stabbing " .. targetName .. " in " .. string.format("%.2f", knifeAttackReadyAt - tick() - snapshotP566Capture15) .. "... (void)"
@@ -931,8 +928,204 @@ local function ragebot_initialize(
     local snapshotP583Capture8 = duelCache
     local snapshotP583Capture10 = indicatorToggle
     local snapshotP583Capture11 = indicatorStyle
+    local medkitStage
+    local medkitStageAt = 0
+    local medkitReturnSlot
+    local medkitHealthAtUse
+    local medkitAttempts = 0
+    local medkitHidden = false
+    local medkitVoidCFrame
+    local function ragebot_option_element(container, flag)
+        if type(container) ~= "table" then
+            return nil
+        end
+        local ok, element = pcall(function()
+            return container[flag]
+        end)
+        if ok then
+            return element
+        end
+        return rawget(container, flag)
+    end
+    local function ragebot_medkit_threshold()
+        local toggle = ragebot_option_element(Toggles, "ragebot_medkit_hide")
+        if not toggle or not toggle.Value then
+            medkitStage = nil
+            return nil
+        end
+        if not voidSpamValue then
+            return nil
+        end
+        local healthSlider = ragebot_option_element(Options, "ragebot_medkit_hide_health")
+        local threshold = 35
+        if healthSlider and type(healthSlider.Value) == "number" then
+            threshold = healthSlider.Value
+        end
+        return threshold
+    end
+    local function ragebot_find_medkit()
+        local items = neutralDependency11 and neutralDependency11.Items
+        if type(items) ~= "table" then
+            return nil
+        end
+        for _, candidate in ipairs(items) do
+            local name = candidate.Name
+            if type(name) == "string" and name:lower():find("medkit", 1, true) then
+                return candidate
+            end
+        end
+    end
+    local function ragebot_medkit_cooldown(item)
+        local cooldownUntil = item._use_cooldown
+        if type(cooldownUntil) ~= "number" then
+            return 0
+        end
+        return math.max(cooldownUntil - tick(), 0)
+    end
+    local function ragebot_medkit_health()
+        local fighter = neutralDependency11
+        if type(fighter) == "table" then
+            local okHealth, health = pcall(fighter.GetHealth, fighter)
+            local okMax, maxHealth = pcall(fighter.GetMaxHealth, fighter)
+            if okHealth and okMax and type(health) == "number" and type(maxHealth) == "number" and maxHealth > 0 then
+                return health, maxHealth
+            end
+        end
+        local character = currentCharacter or localPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.MaxHealth > 0 then
+            return humanoid.Health, humanoid.MaxHealth
+        end
+        return nil, nil
+    end
+    local function ragebot_use_medkit(item, methodName, actionName)
+        local method = item[methodName]
+        if type(method) == "function" then
+            pcall(method, item)
+        end
+        if not snapshotP566Capture10 or not neutralDependency14 then
+            return false
+        end
+        local ok = pcall(function()
+            neutralDependency13(snapshotP566Capture10, item:Get("ObjectID"), neutralDependency14:ToEnum(actionName), {}, nil)
+        end)
+        return ok
+    end
+        local function ragebot_medkit_hide(deltaTime)
+            local threshold = ragebot_medkit_threshold()
+            if not threshold then
+                return nil
+            end
+            local health, maxHealth = ragebot_medkit_health()
+            if not health or not maxHealth then
+                medkitStage = nil
+                return nil
+            end
+            local percent = health / maxHealth * 100
+            local medkit = ragebot_find_medkit()
+            local function ensureHidden()
+                if not medkitHidden then
+                    medkitHidden = true
+                    medkitVoidCFrame = selectedAttackResolver()
+                    ragebot_store_value3(medkitVoidCFrame)
+                end
+            end
+            local function hideNow()
+                medkitVoidCFrame = selectedAttackResolver()
+                ragebot_store_value3(medkitVoidCFrame)
+            end
+            local function finishMedkit(endText)
+                medkitStage = nil
+                medkitHealthAtUse = nil
+                medkitAttempts = 0
+                medkitHidden = false
+                medkitVoidCFrame = nil
+                local returnSlot = medkitReturnSlot
+                medkitReturnSlot = nil
+                ragebot_store_value3(nil)
+                if type(returnSlot) == "number" then
+                    task.spawn(neutralDependency11.EquipItem, neutralDependency11, returnSlot)
+                end
+                return ragebot_void_spam_status(endText)
+            end
+            local function healthPercent()
+                return string.format("%d%%", math.floor(percent + 0.5))
+            end
+            if medkitStage == "healing" then
+                if medkitVoidCFrame then
+                    ragebot_store_value3(medkitVoidCFrame)
+                end
+                local healed = health >= maxHealth - 0.5 or (medkitHealthAtUse and health > medkitHealthAtUse + 0.5)
+                if healed then
+                    return finishMedkit("healed " .. healthPercent())
+                end
+                if tick() - medkitStageAt > 8.5 then
+                    medkitAttempts = (medkitAttempts or 0) + 1
+                    if medkitAttempts >= 4 then
+                        return finishMedkit("medkit failed")
+                    end
+                    medkitStage = "ready"
+                    ensureHidden()
+                    medkitStageAt = tick()
+                end
+                return ragebot_void_spam_status("medkit healing " .. healthPercent())
+            end
+            if health > threshold then
+                medkitStage = nil
+                medkitAttempts = 0
+                return nil
+            end
+            if not medkit then
+                hideNow()
+                return ragebot_void_spam_status("no medkit")
+            end
+            local cooldown = ragebot_medkit_cooldown(medkit)
+            if cooldown > 0 then
+                hideNow()
+                return ragebot_void_spam_status("waiting for medkit cooldown " .. string.format("%ds", math.ceil(cooldown)))
+            end
+            if medkitStage ~= "ready" then
+                hideNow()
+            end
+            local equipped = neutralDependency11.EquippedItem
+            if equipped ~= medkit then
+                if not medkitReturnSlot and equipped and equipped.Data then
+                    medkitReturnSlot = equipped.Data.ItemIndex
+                end
+                if medkitStage ~= "equipping" or tick() - medkitStageAt > 1.5 then
+                    medkitStage = "equipping"
+                    medkitStageAt = tick()
+                    task.spawn(neutralDependency11.EquipItem, neutralDependency11, medkit.Data.ItemIndex)
+                end
+                return ragebot_void_spam_status("equipping medkit")
+            end
+            if medkitStage ~= "ready" then
+                medkitStage = "ready"
+                medkitStageAt = tick()
+                return ragebot_void_spam_status("medkit ready")
+            end
+            local okEquip, isEquipping = pcall(function()
+                return medkit:IsEquipping()
+            end)
+            if (okEquip and isEquipping) or tick() - medkitStageAt < 0.6 then
+                return ragebot_void_spam_status("medkit ready")
+            end
+            medkitHealthAtUse = health
+            local useMethod = "StartShooting"
+            local useAction = "StartShooting"
+            if (medkitAttempts or 0) >= 2 then
+                useMethod = "StartAiming"
+                useAction = "StartAiming"
+            end
+            medkitStage = "healing"
+            medkitStageAt = tick()
+            ragebot_use_medkit(medkit, useMethod, useAction)
+            return ragebot_void_spam_status("using medkit")
+        end
+
     local function ragebot_execute_attack_cycle(deltaTime)
         ragebotActive = true
+        local medkitStatus = ragebot_medkit_hide(deltaTime)
         local items = neutralDependency11.Items
         local isKnifeMode = ragebotMode == "knife"
         local isMeleeMode = ragebotMode == "melee"
@@ -968,17 +1161,19 @@ local function ragebot_initialize(
             workerArgument = gunItems
         end
         local neutralValue1, neutralValue2, neutralValue3, neutralValue4, neutralValue5, neutralValue6 = nil, nil, nil, nil, nil, nil
-        local status
-        if worker then
-            local currentDuel = snapshotP583Capture8.current
-            local duelData = currentDuel and currentDuel.Data
-            local duelStatus = duelData and duelData.Status
-            if duelStatus == "RoundStarted" then
-                neutralValue1, neutralValue2, neutralValue3, neutralValue4, neutralValue5, neutralValue6 = ragebot_select_priority()
+        local status = medkitStatus
+        if not status then
+            if worker then
+                local currentDuel = snapshotP583Capture8.current
+                local duelData = currentDuel and currentDuel.Data
+                local duelStatus = duelData and duelData.Status
+                if duelStatus == "RoundStarted" then
+                    neutralValue1, neutralValue2, neutralValue3, neutralValue4, neutralValue5, neutralValue6 = ragebot_select_priority()
+                end
+                status = worker(workerArgument, neutralValue1, neutralValue3, neutralValue4, deltaTime, neutralValue5, neutralValue2, duelStatus)
+            else
+                status = "invalid weapons for ragebot"
             end
-            status = worker(workerArgument, neutralValue1, neutralValue3, neutralValue4, deltaTime, neutralValue5, neutralValue2, duelStatus)
-        else
-            status = "invalid weapons for ragebot"
         end
         local message = ""
         if snapshotP583Capture10.Value then
@@ -2417,6 +2612,55 @@ local function loadCosmeticValidationModules()
     return true
 end
 
+local function feFindModelChild(root, name, depth)
+    if type(root) ~= 'Instance' or type(name) ~= 'string' or name == '' then
+        return nil
+    end
+    if type(depth) ~= 'number' or depth > 4 then
+        return nil
+    end
+    local children = root:GetChildren()
+    for _, child in ipairs(children) do
+        if child.Name == name and child:IsA('Model') and child.Name ~= 'Skin Case' then
+            return child
+        end
+    end
+    for _, child in ipairs(children) do
+        if child.Name == 'Skin Case' then
+            continue
+        end
+        if child:IsA('Folder') or child:IsA('Model') then
+            local found = feFindModelChild(child, name, (depth or 0) + 1)
+            if found then
+                return found
+            end
+        end
+    end
+    return nil
+end
+
+local function feFindWeaponModel(viewModels, weaponName)
+    if type(viewModels) ~= 'Instance' then
+        return nil, nil
+    end
+    local weapons = viewModels:FindFirstChild('Weapons')
+    if weapons then
+        local direct = weapons:FindFirstChild(weaponName)
+        if direct then
+            return direct, weaponName
+        end
+        local nested = feFindModelChild(weapons, weaponName, 0)
+        if nested then
+            return nested, weaponName
+        end
+    end
+    local anywhere = feFindModelChild(viewModels, weaponName, 0)
+    if anywhere then
+        return anywhere, weaponName
+    end
+    return nil, nil
+end
+
 local function resolveEquippableSkin(baseWeaponName, candidateSkinName, cosmeticsCache)
     if type(baseWeaponName) ~= 'string' or type(candidateSkinName) ~= 'string' or candidateSkinName == '' then
         return nil
@@ -2457,16 +2701,1436 @@ local function resolveEquippableSkin(baseWeaponName, candidateSkinName, cosmetic
         return nil
     end
 
-    local foundModel
-    local searched = pcall(function()
-        foundModel = cosmeticValidationUtility:LookThrough(viewModels, candidateSkinName)
-    end)
-    if not searched or foundModel == nil then
+    local foundModel = viewModels:FindFirstChild(candidateSkinName)
+    if not foundModel then
+        -- Same lookup the original build used: real game skins live under
+        -- Skin Case and friends, so this must stay for them.
+        local searched = pcall(function()
+            foundModel = cosmeticValidationUtility:LookThrough(viewModels, candidateSkinName)
+        end)
+        if not searched then
+            foundModel = nil
+        end
+    end
+    if not foundModel then
+        foundModel = feFindModelChild(viewModels, candidateSkinName, 0)
+    end
+    if not foundModel then
         return nil
     end
 
     return candidateSkinName
 end
+local FE_CUSTOM_SKIN_FILE = 'fake_enhancements_custom_skins.json'
+
+local function feReadCustomSkins()
+    local entries = {}
+    if type(readfile) ~= 'function' or type(isfile) ~= 'function' then
+        return entries
+    end
+    local checked, hasFile = pcall(isfile, FE_CUSTOM_SKIN_FILE)
+    if not checked or not hasFile then
+        return entries
+    end
+    local okRead, contents = pcall(readfile, FE_CUSTOM_SKIN_FILE)
+    if not okRead or type(contents) ~= 'string' or contents == '' then
+        return entries
+    end
+    local okDecode, decoded = pcall(function()
+        return game:GetService('HttpService'):JSONDecode(contents)
+    end)
+    if okDecode and type(decoded) == 'table' then
+        return decoded
+    end
+    return entries
+end
+
+local function feWriteCustomSkins(entries)
+    if type(writefile) ~= 'function' then
+        return false
+    end
+    local okEncode, encoded = pcall(function()
+        return game:GetService('HttpService'):JSONEncode(entries)
+    end)
+    if not okEncode or type(encoded) ~= 'string' then
+        return false
+    end
+    return (pcall(writefile, FE_CUSTOM_SKIN_FILE, encoded))
+end
+
+local function feAssetId(rawId)
+    if type(rawId) == 'number' then
+        return 'rbxassetid://' .. tostring(math.floor(rawId))
+    end
+    if type(rawId) ~= 'string' then
+        return nil
+    end
+    local digits = string.match(rawId, '(%d+)')
+    if not digits then
+        return nil
+    end
+    return 'rbxassetid://' .. digits
+end
+
+local function feAssetIdList(rawId)
+    local ids = {}
+    if type(rawId) == 'table' then
+        for _, value in ipairs(rawId) do
+            local parsed = feAssetId(value)
+            if parsed then
+                ids[#ids + 1] = parsed
+            end
+        end
+        return ids
+    end
+    if type(rawId) ~= 'string' then
+        local parsed = feAssetId(rawId)
+        if parsed then
+            ids[1] = parsed
+        end
+        return ids
+    end
+    for piece in string.gmatch(rawId, '[^,;%s]+') do
+        local parsed = feAssetId(piece)
+        if parsed then
+            ids[#ids + 1] = parsed
+        end
+    end
+    return ids
+end
+
+local function feFindSkinTemplate(weaponName, preferredBase)
+    if not loadCosmeticValidationModules() then
+        return nil, nil
+    end
+    local cosmetics = cosmeticValidationLibrary.Cosmetics
+    if type(cosmetics) ~= 'table' then
+        return nil, nil
+    end
+    if preferredBase and type(cosmetics[preferredBase]) == 'table' then
+        return preferredBase, cosmetics[preferredBase]
+    end
+    if preferredBase then
+        local wantedBase = string.lower(preferredBase)
+        for name, data in pairs(cosmetics) do
+            if string.lower(name) == wantedBase and type(data) == 'table' then
+                return name, data
+            end
+        end
+    end
+    local wantedWeapon = string.lower(weaponName)
+    for name, data in pairs(cosmetics) do
+        if type(data) == 'table' and data.Type == 'Skin' and type(data.ItemName) == 'string' then
+            if string.lower(data.ItemName) == wantedWeapon then
+                return name, data
+            end
+        end
+    end
+    return nil, nil
+end
+
+local function feRegisterCustomSkin(entry)
+    if type(entry) ~= 'table' then
+        return false
+    end
+    local skinName = entry.name
+    local weaponName = entry.weapon
+    if type(skinName) ~= 'string' or skinName == '' or type(weaponName) ~= 'string' or weaponName == '' then
+        return false
+    end
+    if not loadCosmeticValidationModules() then
+        return false
+    end
+    local baseName, baseData = feFindSkinTemplate(weaponName, entry.base)
+    if not baseData then
+        return false
+    end
+
+    local meshIds = feAssetIdList(entry.id)
+    local textureId = feAssetId(entry.texture)
+    local assetId = textureId or meshIds[1]
+    local viewModelSource = baseData.ViewModelName or baseData.SourceViewModelName or weaponName
+    if type(viewModelSource) ~= 'string' or viewModelSource == '' then
+        viewModelSource = weaponName
+    end
+    local previewImage = assetId or baseData.Image or ''
+    cosmeticValidationLibrary.Cosmetics[skinName] = {
+        Name = skinName,
+        DisplayName = skinName,
+        Type = 'Skin',
+        Rarity = 'Contraband',
+        ItemName = weaponName,
+        ViewModelName = skinName,
+        SourceViewModelName = viewModelSource,
+        WorldViewModelName = viewModelSource,
+        Image = previewImage,
+        ImageHighResolution = previewImage,
+        ImageScale = 3,
+        Owned = true,
+        Unlocked = true,
+        Locked = false,
+    }
+
+    local viewModelMetadata = cosmeticValidationItemLibrary.ViewModels
+    local sourceViewModelData = nil
+    if type(viewModelMetadata) == 'table' then
+        sourceViewModelData = viewModelMetadata[viewModelSource]
+        if type(sourceViewModelData) ~= 'table' then
+            sourceViewModelData = viewModelMetadata[baseName]
+        end
+    end
+    if type(sourceViewModelData) == 'table' then
+        local clonedMetadata = {}
+        for key, value in pairs(sourceViewModelData) do
+            clonedMetadata[key] = value
+        end
+        clonedMetadata.Image = previewImage
+        clonedMetadata.ImageHighResolution = previewImage
+        viewModelMetadata[skinName] = clonedMetadata
+    end
+
+    local sharedCache = rawget(runtimeEnvironment, '__fe_cosmetics_cache')
+    if type(sharedCache) == 'table' and type(sharedCache.skin) == 'table' then
+        local weaponSkins = sharedCache.skin[weaponName]
+        if type(weaponSkins) == 'table' and not table.find(weaponSkins, skinName) then
+            table.insert(weaponSkins, skinName)
+        end
+    end
+
+    local playerScripts = runtimePlayerScripts or runtimeLocalPlayer:FindFirstChild('PlayerScripts')
+    local assets = playerScripts and playerScripts:FindFirstChild('Assets')
+    local viewModels = assets and assets:FindFirstChild('ViewModels')
+    if not viewModels then
+        return true
+    end
+    local existingModel = viewModels:FindFirstChild(skinName)
+    if existingModel then
+        pcall(function()
+            existingModel:Destroy()
+        end)
+    end
+
+    local baseModel, resolvedSource = feFindWeaponModel(viewModels, weaponName)
+    if not baseModel then
+        runtimeEnvironment.__fe_custom_skin_error = 'no base model for ' .. tostring(weaponName)
+        return true
+    end
+    if resolvedSource and cosmeticValidationLibrary.Cosmetics[skinName] then
+        cosmeticValidationLibrary.Cosmetics[skinName].SourceViewModelName = resolvedSource
+        cosmeticValidationLibrary.Cosmetics[skinName].WorldViewModelName = resolvedSource
+    end
+
+    local clonedOk, clonedModel = pcall(function()
+        return baseModel:Clone()
+    end)
+    if not clonedOk or not clonedModel then
+        runtimeEnvironment.__fe_custom_skin_error = 'clone failed for ' .. tostring(weaponName)
+        return true
+    end
+
+    local meshOk, meshError = pcall(function()
+    if #meshIds > 0 then
+        local meshParts = {}
+        for _, descendant in ipairs(clonedModel:GetDescendants()) do
+            if descendant:IsA('MeshPart') then
+                meshParts[#meshParts + 1] = descendant
+            end
+        end
+        if #meshParts > 0 then
+            table.sort(meshParts, function(left, right)
+                return left.Size.Magnitude > right.Size.Magnitude
+            end)
+            local anchor = meshParts[1]
+            local scale = tonumber(entry.scale) or 0.35
+            local offset = Vector3.new(0.1, -0.25, 0.04)
+            if weaponName ~= 'Assault Rifle' then
+                scale = tonumber(entry.scale) or 1
+                offset = Vector3.zero
+            end
+            for _, part in ipairs(meshParts) do
+                pcall(function()
+                    part:SetAttribute('__fe_base_size', part.Size)
+                    part.Transparency = 1
+                    part.Size = Vector3.new(0.001, 0.001, 0.001)
+                end)
+                for _, child in ipairs(part:GetChildren()) do
+                    if child:IsA('Decal') or child:IsA('Texture') then
+                        pcall(function()
+                            child.Transparency = 1
+                        end)
+                    end
+                end
+            end
+            local replacement = feMakeReplacement(meshIds[1], textureId, scale)
+            local centre = Vector3.zero
+            local counted = 0
+            for index = 1, math.min(3, #meshParts) do
+                centre = centre + meshParts[index].Position
+                counted = counted + 1
+            end
+            if counted == 0 then
+                return true
+            end
+            centre = centre / counted
+            replacement.Size = Vector3.new(scale, scale, scale)
+            replacement.CFrame = CFrame.new(centre) * anchor.CFrame.Rotation * CFrame.new(offset)
+            replacement.Anchored = false
+            replacement.CanCollide = false
+            replacement.CanQuery = false
+            replacement.CanTouch = false
+            replacement.Massless = true
+            replacement.Parent = anchor.Parent
+            local weld = Instance.new('WeldConstraint')
+            weld.Part0 = anchor
+            weld.Part1 = replacement
+            weld.Parent = replacement
+        end
+    end
+    end)
+    if not meshOk then
+        runtimeEnvironment.__fe_custom_skin_error = 'mesh: ' .. tostring(meshError)
+    end
+
+    clonedModel.Name = skinName
+    clonedModel.Parent = viewModels
+    local registeredNames = rawget(runtimeEnvironment, '__fe_registered_custom_skins')
+    if type(registeredNames) ~= 'table' then
+        registeredNames = {}
+        runtimeEnvironment.__fe_registered_custom_skins = registeredNames
+    end
+    registeredNames[skinName] = true
+    return true
+end
+
+local function feFighter()
+    local environment = getfenv().getgenv()
+    local controller = environment and environment.__fe_fighter_controller
+    if type(controller) ~= 'table' then
+        pcall(function()
+            local playerScripts = runtimePlayerScripts or runtimeLocalPlayer:FindFirstChild('PlayerScripts')
+            local controllers = playerScripts and playerScripts:FindFirstChild('Controllers')
+            local module = controllers and controllers:FindFirstChild('FighterController')
+            if not module then
+                local modules = game:GetService('ReplicatedStorage'):FindFirstChild('Modules')
+                module = modules and modules:FindFirstChild('FighterController')
+            end
+            if module then
+                controller = require(module)
+                if environment then
+                    environment.__fe_fighter_controller = controller
+                end
+            end
+        end)
+    end
+    if type(controller) ~= 'table' then
+        return nil
+    end
+    return controller.LocalFighter
+end
+
+local feForceReequip
+
+feForceReequip = function(weaponName)
+    local fighter = feFighter()
+    if type(fighter) ~= 'table' then
+        return false
+    end
+    local item = fighter.EquippedItem
+    if type(item) ~= 'table' then
+        return false
+    end
+    if type(weaponName) == 'string' and item.Name ~= weaponName then
+        return false
+    end
+    local slot = item.Data and item.Data.ItemIndex
+    if type(slot) ~= 'number' then
+        return false
+    end
+    local otherSlot = slot == 1 and 2 or 1
+    local swapped = pcall(fighter.EquipItem, fighter, otherSlot)
+    task.delay(0.05, function()
+        pcall(fighter.EquipItem, fighter, slot)
+    end)
+    return swapped
+end
+
+local function feBuildReplacement(meshAsset, textureAsset, scale)
+    local wantedScale = tonumber(scale)
+    local created = nil
+
+    local loadedMesh, meshPart = pcall(function()
+        return game:GetService('AssetService'):CreateMeshPartAsync(meshAsset)
+    end)
+    if loadedMesh and typeof(meshPart) == 'Instance' and meshPart:IsA('BasePart') then
+        created = meshPart
+    end
+
+    if not created then
+        local loaded, objects = pcall(function()
+            return game:GetObjects(meshAsset)
+        end)
+        if loaded and type(objects) == 'table' then
+            local first = objects[1]
+            if first then
+                if first:IsA('BasePart') then
+                    created = first
+                else
+                    local parts = {}
+                    for _, descendant in ipairs(first:GetDescendants()) do
+                        if descendant:IsA('MeshPart') then
+                            parts[#parts + 1] = descendant
+                        end
+                    end
+                    table.sort(parts, function(left, right)
+                        return left.Size.Magnitude > right.Size.Magnitude
+                    end)
+                    created = parts[1] or first:FindFirstChildWhichIsA('BasePart', true)
+                end
+                if created then
+                    created = created:Clone()
+                end
+            end
+        end
+    end
+
+    if not created then
+        created = Instance.new('MeshPart')
+        pcall(function()
+            created.MeshId = meshAsset
+        end)
+    end
+
+    if not (loadedMesh and created == meshPart) and wantedScale and wantedScale > 0 then
+        pcall(function()
+            created.Size = Vector3.new(wantedScale, wantedScale, wantedScale)
+        end)
+    end
+    if textureAsset and created:IsA('MeshPart') then
+        pcall(function()
+            created.TextureID = textureAsset
+        end)
+    end
+    created.Name = '__fe_custom_skin_body'
+    created.Anchored = false
+    created.CanCollide = false
+    pcall(function()
+        created.CanQuery = false
+        created.CanTouch = false
+    end)
+    created.Massless = true
+    return created
+end
+
+local function feMakeReplacement(meshAsset, textureAsset, scale)
+    local cache = rawget(runtimeEnvironment, '__fe_skin_template_cache')
+    if type(cache) ~= 'table' then
+        cache = {}
+        runtimeEnvironment.__fe_skin_template_cache = cache
+    end
+    local key = table.concat({ tostring(meshAsset), tostring(textureAsset), tostring(scale) }, '|')
+    local template = cache[key]
+    if typeof(template) ~= 'Instance' then
+        template = feBuildReplacement(meshAsset, textureAsset, scale)
+        if typeof(template) ~= 'Instance' then
+            return nil
+        end
+        cache[key] = template
+    end
+    return template:Clone()
+end
+
+local function feApplyLiveSkin(entry)
+    if type(entry) ~= 'table' then
+        return false
+    end
+    local mesh = tostring(entry.id):match('%d+')
+    if not mesh then
+        return false
+    end
+    local texture = entry.texture and tostring(entry.texture):match('%d+') or nil
+    local fighter = feFighter()
+    local item = type(fighter) == 'table' and fighter.EquippedItem
+    local viewModel = item and item.ViewModel
+    local model = viewModel and viewModel.Model
+    if not model then
+        return false
+    end
+    local previous = model:FindFirstChild('__fe_custom_skin_body', true)
+    if previous then
+        pcall(function()
+            previous:Destroy()
+        end)
+    end
+    local parts = {}
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA('MeshPart') and descendant.Name ~= '__fe_custom_skin_body' then
+            parts[#parts + 1] = descendant
+        end
+    end
+    if #parts == 0 then
+        return false
+    end
+    for _, part in ipairs(parts) do
+        local storedSize = part:GetAttribute('__fe_base_size')
+        if typeof(storedSize) == 'Vector3' then
+            pcall(function()
+                part.Size = storedSize
+            end)
+        end
+    end
+    table.sort(parts, function(left, right)
+        return left.Size.Magnitude > right.Size.Magnitude
+    end)
+    local anchor = parts[1]
+    local anchorSize = anchor.Size
+    local scale = tonumber(entry.scale) or 1
+    local offset = Vector3.new(0, 0, 0)
+    local centre = Vector3.zero
+    local counted = 0
+    for index = 1, math.min(3, #parts) do
+        centre = centre + parts[index].Position
+        counted = counted + 1
+    end
+    if counted == 0 then
+        return false
+    end
+    centre = centre / counted
+    local replacement = feMakeReplacement('rbxassetid://' .. mesh, texture and ('rbxassetid://' .. texture) or nil, scale)
+    if not replacement then
+        return false
+    end
+    for _, part in ipairs(parts) do
+        pcall(function()
+            if part:GetAttribute('__fe_base_size') == nil then
+                part:SetAttribute('__fe_base_size', part.Size)
+                part:SetAttribute('__fe_base_transparency', part.Transparency)
+            end
+            part.Transparency = 1
+            part.Size = Vector3.new(0.001, 0.001, 0.001)
+        end)
+    end
+    local meshSize = replacement.Size
+    local meshLongAxis = 'X'
+    local meshLongLength = meshSize.X
+    if meshSize.Y > meshLongLength then
+        meshLongAxis = 'Y'
+        meshLongLength = meshSize.Y
+    end
+    if meshSize.Z > meshLongLength then
+        meshLongAxis = 'Z'
+        meshLongLength = meshSize.Z
+    end
+    local gunLongAxis = 'X'
+    local gunLongLength = anchorSize.X
+    if anchorSize.Y > gunLongLength then
+        gunLongAxis = 'Y'
+        gunLongLength = anchorSize.Y
+    end
+    if anchorSize.Z > gunLongLength then
+        gunLongAxis = 'Z'
+        gunLongLength = anchorSize.Z
+    end
+
+    if meshLongLength > 0 and gunLongLength > 0 then
+        local factor = math.clamp((gunLongLength / meshLongLength) * (scale > 0 and scale or 1), 0.01, 50)
+        pcall(function()
+            replacement.Size = meshSize * factor
+        end)
+    end
+
+    local rotation = CFrame.new()
+    if meshLongAxis == 'X' and gunLongAxis == 'Y' then
+        rotation = CFrame.Angles(0, 0, math.rad(90))
+    elseif meshLongAxis == 'X' and gunLongAxis == 'Z' then
+        rotation = CFrame.Angles(0, math.rad(-90), 0)
+    elseif meshLongAxis == 'Y' and gunLongAxis == 'X' then
+        rotation = CFrame.Angles(0, 0, math.rad(-90))
+    elseif meshLongAxis == 'Y' and gunLongAxis == 'Z' then
+        rotation = CFrame.Angles(math.rad(90), 0, 0)
+    elseif meshLongAxis == 'Z' and gunLongAxis == 'X' then
+        rotation = CFrame.Angles(0, math.rad(90), 0)
+    elseif meshLongAxis == 'Z' and gunLongAxis == 'Y' then
+        rotation = CFrame.Angles(math.rad(-90), 0, 0)
+    end
+
+    pcall(function()
+        replacement.Color = Color3.fromRGB(255, 255, 255)
+    end)
+    replacement.CFrame = anchor.CFrame * rotation * CFrame.new(offset)
+    replacement.Parent = anchor.Parent
+    local weld = Instance.new('WeldConstraint')
+    weld.Part0 = anchor
+    weld.Part1 = replacement
+    weld.Parent = replacement
+    return true
+end
+
+local function feClearLiveSkin()
+    local fighter = feFighter()
+    local item = type(fighter) == 'table' and fighter.EquippedItem
+    local viewModel = item and item.ViewModel
+    local model = viewModel and viewModel.Model
+    if not model then
+        return false
+    end
+    local replacement = model:FindFirstChild('__fe_custom_skin_body', true)
+    if replacement then
+        pcall(function()
+            replacement:Destroy()
+        end)
+    end
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA('BasePart') then
+            local storedSize = descendant:GetAttribute('__fe_base_size')
+            if typeof(storedSize) == 'Vector3' then
+                local storedTransparency = descendant:GetAttribute('__fe_base_transparency')
+                pcall(function()
+                    descendant.Size = storedSize
+                    descendant.Transparency = tonumber(storedTransparency) or 0
+                end)
+                pcall(function()
+                    descendant:SetAttribute('__fe_base_size', nil)
+                    descendant:SetAttribute('__fe_base_transparency', nil)
+                end)
+            end
+        end
+    end
+    return true
+end
+
+local function feEquippedWeaponName()
+    local fighter = feFighter()
+    local item = type(fighter) == 'table' and fighter.EquippedItem
+    return type(item) == 'table' and tostring(item.Name or '') or ''
+end
+
+local function feHasLiveSkin()
+    local fighter = feFighter()
+    local item = type(fighter) == 'table' and fighter.EquippedItem
+    local viewModel = type(item) == 'table' and item.ViewModel
+    local model = type(viewModel) == 'table' and viewModel.Model
+    if not model then
+        return false
+    end
+    return model:FindFirstChild('__fe_custom_skin_body', true) ~= nil
+end
+
+local function feApplySelectedSkin(weaponName)
+    if feEquippedWeaponName() ~= weaponName then
+        return false
+    end
+    local skinData = rawget(runtimeEnvironment, '__fe_skin_data')
+    local store = rawget(runtimeEnvironment, '__fe_custom_skins_store')
+    if type(store) ~= 'table' then
+        store = feReadCustomSkins()
+        runtimeEnvironment.__fe_custom_skins_store = store
+    end
+    if type(skinData) ~= 'table' or type(store) ~= 'table' then
+        return false
+    end
+    local settings = skinData[weaponName]
+    local selection = type(settings) == 'table' and settings.skin
+    if type(selection) ~= 'table' or not selection.enabled or type(selection.name) ~= 'string' then
+        return false
+    end
+    local entry = store[selection.name]
+    if type(entry) ~= 'table' then
+        feClearLiveSkin()
+        return false
+    end
+    return feApplyLiveSkin(entry)
+end
+
+local feSyncCustomSkins
+local feCustomSkinStore
+
+local function feWatchSkinChanges()
+    if rawget(runtimeEnvironment, '__fe_skin_watcher') then
+        return
+    end
+    local token = {}
+    runtimeEnvironment.__fe_skin_watcher = token
+    task.spawn(function()
+        local seen = {}
+        local lastAttempt = {}
+        while rawget(runtimeEnvironment, '__fe_skin_watcher') == token do
+            local skinData = rawget(runtimeEnvironment, '__fe_skin_data')
+            if type(skinData) == 'table' then
+                local store = feCustomSkinStore()
+                for weaponName, weaponData in pairs(skinData) do
+                    local skin = type(weaponData) == 'table' and weaponData.skin
+                    local currentName = ''
+                    if type(skin) == 'table' then
+                        local pickedName = tostring(skin.name or '')
+                        if type(store[pickedName]) == 'table' and not skin.enabled then
+                            pcall(function()
+                                skin.enabled = true
+                            end)
+                        end
+                        if skin.enabled then
+                            currentName = pickedName
+                        end
+                    end
+                    if seen[weaponName] ~= currentName then
+                        seen[weaponName] = currentName
+                        lastAttempt[weaponName] = os.clock()
+                        feApplySelectedSkin(weaponName)
+                    elseif type(store[currentName]) == 'table'
+                        and feEquippedWeaponName() == weaponName
+                        and not feHasLiveSkin()
+                    then
+                        local now = os.clock()
+                        if (lastAttempt[weaponName] or 0) + 1 < now then
+                            lastAttempt[weaponName] = now
+                            feApplySelectedSkin(weaponName)
+                        end
+                    end
+                end
+            end
+            local watchedSignature = rawget(runtimeEnvironment, '__fe_skin_file_signature')
+            if type(readfile) == 'function' and type(isfile) == 'function' then
+                local okFile, hasFile = pcall(isfile, FE_CUSTOM_SKIN_FILE)
+                if okFile and hasFile then
+                    local okRead, contents = pcall(readfile, FE_CUSTOM_SKIN_FILE)
+                    if okRead and type(contents) == 'string' and contents ~= watchedSignature then
+                        runtimeEnvironment.__fe_skin_file_signature = contents
+                        pcall(feSyncCustomSkins)
+                    end
+                end
+            end
+            task.wait(0.4)
+        end
+    end)
+
+    task.spawn(function()
+        local runService = game:GetService('RunService')
+        while rawget(runtimeEnvironment, '__fe_skin_watcher') == token do
+            pcall(function()
+                local equipped = feEquippedWeaponName()
+                if equipped == '' then
+                    return
+                end
+                local skinData = rawget(runtimeEnvironment, '__fe_skin_data')
+                local settings = type(skinData) == 'table' and skinData[equipped]
+                local skin = type(settings) == 'table' and settings.skin
+                if type(skin) ~= 'table' or not skin.enabled then
+                    return
+                end
+                local entry = feCustomSkinStore()[tostring(skin.name or '')]
+                if type(entry) == 'table' and not feHasLiveSkin() then
+                    feApplyLiveSkin(entry)
+                end
+            end)
+            runService.RenderStepped:Wait()
+        end
+    end)
+end
+
+feCustomSkinStore = function()
+    local store = rawget(runtimeEnvironment, '__fe_custom_skins_store')
+    if type(store) ~= 'table' then
+        store = feReadCustomSkins()
+        runtimeEnvironment.__fe_custom_skins_store = store
+    end
+    return store
+end
+
+local function feUnregisterCustomSkin(skinName)
+    if type(skinName) ~= 'string' or skinName == '' then
+        return false
+    end
+    local playerScripts = runtimePlayerScripts or runtimeLocalPlayer:FindFirstChild('PlayerScripts')
+    local assets = playerScripts and playerScripts:FindFirstChild('Assets')
+    local viewModels = assets and assets:FindFirstChild('ViewModels')
+    if viewModels then
+        local model = viewModels:FindFirstChild(skinName)
+        if model then
+            pcall(function()
+                model:Destroy()
+            end)
+        end
+    end
+    if loadCosmeticValidationModules() then
+        if type(cosmeticValidationLibrary.Cosmetics) == 'table' then
+            cosmeticValidationLibrary.Cosmetics[skinName] = nil
+        end
+        if type(cosmeticValidationItemLibrary.ViewModels) == 'table' then
+            cosmeticValidationItemLibrary.ViewModels[skinName] = nil
+        end
+    end
+    local cache = rawget(runtimeEnvironment, '__fe_cosmetics_cache')
+    if type(cache) == 'table' and type(cache.skin) == 'table' then
+        for _, list in pairs(cache.skin) do
+            if type(list) == 'table' then
+                for index = #list, 1, -1 do
+                    if list[index] == skinName then
+                        table.remove(list, index)
+                    end
+                end
+            end
+        end
+    end
+    local registeredNames = rawget(runtimeEnvironment, '__fe_registered_custom_skins')
+    if type(registeredNames) == 'table' then
+        registeredNames[skinName] = nil
+    end
+    return true
+end
+
+-- The changer caches its tile lists, so it is rebuilt rather than refreshed
+-- for adds and deletes to show up without rejoining.
+-- The changer builds its tile lists once, so they are rebuilt from the live
+-- Cosmetics table for adds and deletes to show up in its filter.
+local function feRebuildCacheLists()
+    local cache = rawget(runtimeEnvironment, '__fe_cosmetics_cache')
+    if type(cache) ~= 'table' or type(cache.skin) ~= 'table' then
+        return false
+    end
+    if not loadCosmeticValidationModules() then
+        return false
+    end
+    local cosmetics = cosmeticValidationLibrary.Cosmetics
+    if type(cosmetics) ~= 'table' then
+        return false
+    end
+    for weaponName, list in pairs(cache.skin) do
+        if type(list) == 'table' then
+            for index = #list, 1, -1 do
+                local info = cosmetics[list[index]]
+                if type(info) ~= 'table' or info.Type ~= 'Skin' then
+                    table.remove(list, index)
+                end
+            end
+            for skinName, info in pairs(cosmetics) do
+                if type(info) == 'table'
+                    and info.Type == 'Skin'
+                    and info.ItemName == weaponName
+                    and not table.find(list, skinName)
+                then
+                    table.insert(list, skinName)
+                end
+            end
+        end
+    end
+
+    local function rebuildShared(key, typeName)
+        local list = cache[key]
+        if type(list) ~= 'table' then
+            list = {}
+            cache[key] = list
+        end
+        for index = #list, 1, -1 do
+            local info = cosmetics[list[index]]
+            if type(info) ~= 'table' or info.Type ~= typeName then
+                table.remove(list, index)
+            end
+        end
+        for name, info in pairs(cosmetics) do
+            if type(info) == 'table'
+                and info.Type == typeName
+                and not info.Hidden
+                and not table.find(list, name)
+            then
+                table.insert(list, name)
+            end
+        end
+        table.sort(list)
+    end
+
+    rebuildShared('charm', 'Charm')
+    rebuildShared('wrap', 'Wrap')
+    rebuildShared('finisher', 'Finisher')
+    return true
+end
+
+local function feRebuildTiles()
+    local tileMap = rawget(runtimeEnvironment, '__fe_cosmetic_tile_map')
+    local visibleMap = rawget(runtimeEnvironment, '__fe_cosmetic_visible_map')
+    if type(tileMap) ~= 'table' then
+        return false
+    end
+    local cleared = false
+    for _, modeName in ipairs({ 'skin', 'wrap', 'charm', 'finisher' }) do
+        local bucket = tileMap[modeName]
+        if type(bucket) == 'table' then
+            for weaponName, entries in pairs(bucket) do
+                if type(entries) == 'table' then
+                    for _, data in pairs(entries) do
+                        local tile = type(data) == 'table' and data[1]
+                        if typeof(tile) == 'Instance' then
+                            pcall(function()
+                                tile:Destroy()
+                            end)
+                        end
+                    end
+                end
+                bucket[weaponName] = nil
+                cleared = true
+            end
+        end
+    end
+    if type(visibleMap) == 'table' then
+        for tile in pairs(visibleMap) do
+            visibleMap[tile] = nil
+        end
+    end
+    return cleared
+end
+
+local function feRefreshCosmetics()
+    pcall(feRebuildCacheLists)
+    pcall(feRebuildTiles)
+    local filter = rawget(runtimeEnvironment, '__fe_cosmetic_filter')
+    if type(filter) == 'function' then
+        pcall(filter)
+    end
+end
+
+local function fePointSelectionAt(oldName, newName)
+    local skinData = rawget(runtimeEnvironment, '__fe_skin_data')
+    if type(skinData) ~= 'table' then
+        return
+    end
+    for _, weaponData in pairs(skinData) do
+        local skin = type(weaponData) == 'table' and weaponData.skin
+        if type(skin) == 'table' and tostring(skin.name) == oldName then
+            if newName then
+                skin.name = newName
+            else
+                skin.enabled = false
+                skin.name = nil
+            end
+        end
+    end
+end
+
+local function feRenameCustomSkin(oldName, newName)
+    local store = feCustomSkinStore()
+    local entry = store[oldName]
+    if type(entry) ~= 'table' or type(newName) ~= 'string' or newName == '' then
+        return false
+    end
+    if store[newName] ~= nil then
+        return false
+    end
+    feUnregisterCustomSkin(oldName)
+    store[oldName] = nil
+    entry.name = newName
+    store[newName] = entry
+    feWriteCustomSkins(store)
+    pcall(feRegisterCustomSkin, entry)
+    fePointSelectionAt(oldName, newName)
+    feRefreshCosmetics()
+    return true
+end
+
+local function feDeleteCustomSkin(skinName)
+    local store = feCustomSkinStore()
+    if type(skinName) ~= 'string' or store[skinName] == nil then
+        return false
+    end
+    feUnregisterCustomSkin(skinName)
+    store[skinName] = nil
+    feWriteCustomSkins(store)
+    fePointSelectionAt(skinName, nil)
+    feClearLiveSkin()
+    feRefreshCosmetics()
+    return true
+end
+
+-- Reads the json every time, so hand edits (or a delete) apply straight away
+-- instead of needing a rejoin.
+feSyncCustomSkins = function()
+    local store = feReadCustomSkins()
+    runtimeEnvironment.__fe_custom_skins_store = store
+    local registeredNames = rawget(runtimeEnvironment, '__fe_registered_custom_skins')
+    if type(registeredNames) ~= 'table' then
+        registeredNames = {}
+        runtimeEnvironment.__fe_registered_custom_skins = registeredNames
+    end
+    local changed = false
+    for skinName in pairs(registeredNames) do
+        if store[skinName] == nil then
+            feUnregisterCustomSkin(skinName)
+            changed = true
+        end
+    end
+    for skinName, entry in pairs(store) do
+        if type(entry) == 'table' and registeredNames[skinName] == nil then
+            entry.name = skinName
+            local ok, result = pcall(feRegisterCustomSkin, entry)
+            if ok and result ~= false then
+                changed = true
+            end
+        end
+    end
+    if changed then
+        feRefreshCosmetics()
+    end
+    return changed
+end
+
+local function feRegisterAllCustomSkins()
+    local store = feCustomSkinStore()
+    for skinName, entry in pairs(store) do
+        if type(entry) == 'table' then
+            entry.name = entry.name or skinName
+            pcall(feRegisterCustomSkin, entry)
+        end
+    end
+    feWatchSkinChanges()
+end
+
+runtimeEnvironment.__fe_custom_skins = {
+    list = feCustomSkinStore,
+    register_all = feRegisterAllCustomSkins,
+    add = function(skinName, weaponName, rawId, baseName, rawTexture)
+        if type(skinName) ~= 'string' or skinName == '' or type(weaponName) ~= 'string' or weaponName == '' then
+            return false
+        end
+        local store = feCustomSkinStore()
+        local entry = { name = skinName, weapon = weaponName, id = rawId, base = baseName, texture = rawTexture }
+        store[skinName] = entry
+        feWriteCustomSkins(store)
+        local okRegister, registered = pcall(feRegisterCustomSkin, entry)
+        if not okRegister or registered == false then
+            store[skinName] = nil
+            feWriteCustomSkins(store)
+            runtimeEnvironment.__fe_custom_skin_error = tostring(registered)
+            return false
+        end
+        feWatchSkinChanges()
+        feApplySelectedSkin(weaponName)
+        return true
+    end,
+    remove = function(skinName)
+        local store = feCustomSkinStore()
+        if type(skinName) ~= 'string' or store[skinName] == nil then
+            return false
+        end
+        store[skinName] = nil
+        feWriteCustomSkins(store)
+        feUnregisterCustomSkin(skinName)
+        feRefreshCosmetics()
+        return true
+    end,
+    sync = feSyncCustomSkins,
+    rename = feRenameCustomSkin,
+    delete = feDeleteCustomSkin,
+}
+
+local function feMousePosition(width, height)
+    local position = UDim2.fromOffset(60, 140)
+    pcall(function()
+        local input = game:GetService('UserInputService')
+        local inset = game:GetService('GuiService'):GetGuiInset()
+        local location = input:GetMouseLocation()
+        local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+        local x = math.clamp(location.X - inset.X, 4, math.max(4, viewport.X - (width or 230)))
+        local y = math.clamp(location.Y - inset.Y, 4, math.max(4, viewport.Y - (height or 120)))
+        position = UDim2.fromOffset(x, y)
+    end)
+    return position
+end
+
+runtimeEnvironment.__fe_custom_skin_manage = function(skinName)
+    if type(skinName) ~= 'string' then
+        return
+    end
+    local library = getfenv().Library
+    if type(library) ~= 'table' or type(library.CreatePopout) ~= 'function' then
+        return
+    end
+    local store = feCustomSkinStore()
+    if type(store[skinName]) ~= 'table' then
+        return
+    end
+
+    local previous = rawget(runtimeEnvironment, '__fe_manage_popout')
+    if previous then
+        pcall(function()
+            previous.Holder.Parent:Destroy()
+        end)
+        runtimeEnvironment.__fe_manage_popout = nil
+    end
+
+    local popout = library:CreatePopout({
+        Title = 'Custom Skin: ' .. skinName,
+        AutoShow = true,
+        Position = feMousePosition(230, 120),
+        Size = getfenv().Vector2.new(230, 1),
+        ZIndex = 30,
+    })
+    runtimeEnvironment.__fe_manage_popout = popout
+    pcall(function()
+        popout.Holder.Parent.DisplayOrder = 60
+    end)
+
+    local nameInput = popout:AddInput('fe_manage_rename', {
+        Text = 'new name',
+        Placeholder = skinName,
+        Numeric = false,
+        Finished = false,
+        Center = false,
+    })
+
+    local function readRename()
+        local value = ''
+        local stored = getfenv().Options and getfenv().Options.fe_manage_rename
+        if type(stored) == 'table' and stored.Value ~= nil then
+            value = tostring(stored.Value)
+        end
+        if value == '' and type(nameInput) == 'table' and nameInput.Value ~= nil then
+            value = tostring(nameInput.Value)
+        end
+        return (string.gsub(value, '^%s*(.-)%s*$', '%1'))
+    end
+
+    popout:AddButton('rename', function()
+        local newName = readRename()
+        if newName == '' or newName == skinName then
+            pcall(library.Notify, library, 'type a new name first', 3)
+            return
+        end
+        if store[newName] ~= nil then
+            pcall(library.Notify, library, 'that name is taken: ' .. newName, 4)
+            return
+        end
+        if feRenameCustomSkin(skinName, newName) then
+            pcall(function()
+                popout.Holder.Parent:Destroy()
+            end)
+        else
+            pcall(library.Notify, library, 'rename failed', 4)
+        end
+    end)
+
+    local function findLabel(text)
+        local found = nil
+        pcall(function()
+            for _, descendant in ipairs(popout.Holder:GetDescendants()) do
+                if not found and descendant:IsA('TextLabel') and descendant.Text == text then
+                    found = descendant
+                end
+            end
+        end)
+        return found
+    end
+
+    local confirming = false
+    local confirmToken = nil
+    local function resetDelete()
+        confirming = false
+        confirmToken = nil
+        pcall(function()
+            local label = findLabel('are you sure?') or findLabel('delete skin')
+            if label then
+                label.Text = 'delete skin'
+                label.TextColor3 = Color3.fromRGB(240, 240, 240)
+            end
+        end)
+    end
+    local deleteButton = popout:AddButton('delete skin', function()
+        if not confirming then
+            confirming = true
+            local token = {}
+            confirmToken = token
+            pcall(function()
+                local label = findLabel('delete skin')
+                if label then
+                    label.Text = 'are you sure?'
+                    label.TextColor3 = Color3.fromRGB(255, 60, 60)
+                end
+            end)
+            task.delay(2.3, function()
+                if confirmToken == token then
+                    resetDelete()
+                end
+            end)
+            return
+        end
+        confirming = false
+        confirmToken = nil
+        if feDeleteCustomSkin(skinName) then
+            pcall(function()
+                popout.Holder.Parent:Destroy()
+            end)
+        else
+            pcall(library.Notify, library, 'delete failed', 4)
+        end
+    end)
+    pcall(function()
+        local label = findLabel('delete skin')
+        if label then
+            label.TextColor3 = Color3.fromRGB(240, 240, 240)
+        end
+    end)
+
+    pcall(function()
+        local input = game:GetService('UserInputService')
+        local connection
+        connection = input.InputBegan:Connect(function(inputObject, processed)
+            if processed then
+                return
+            end
+            local inputType = inputObject.UserInputType
+            if inputType ~= Enum.UserInputType.MouseButton1 and inputType ~= Enum.UserInputType.Touch then
+                return
+            end
+            local frame = popout.Holder
+            if not frame or not frame.Parent then
+                pcall(function()
+                    connection:Disconnect()
+                end)
+                return
+            end
+            local position = Vector2.new(inputObject.Position.X, inputObject.Position.Y)
+            local topLeft = frame.AbsolutePosition
+            local size = frame.AbsoluteSize
+            local inside = position.X >= topLeft.X
+                and position.X <= topLeft.X + size.X
+                and position.Y >= topLeft.Y
+                and position.Y <= topLeft.Y + size.Y
+            if inside then
+                return
+            end
+            pcall(function()
+                connection:Disconnect()
+            end)
+            pcall(function()
+                frame.Parent:Destroy()
+            end)
+        end)
+    end)
+end
+
+runtimeEnvironment.__fe_custom_skin_menu = function()
+    local library = getfenv().Library
+    if type(library) ~= 'table' or type(library.CreatePopout) ~= 'function' then
+        return
+    end
+    local previousAdd = rawget(runtimeEnvironment, '__fe_add_popout')
+    if previousAdd then
+        pcall(function()
+            previousAdd.Holder.Parent:Destroy()
+        end)
+        runtimeEnvironment.__fe_add_popout = nil
+    end
+    local popout = library:CreatePopout({
+        Title = 'Add Custom Skin',
+        AutoShow = true,
+        Size = getfenv().Vector2.new(340, 1),
+    })
+    runtimeEnvironment.__fe_add_popout = popout
+    local addClosed = false
+    pcall(function()
+        -- float above the changer instead of hiding behind it
+        popout.Holder.Parent.DisplayOrder = 40
+        local closeButton = Instance.new('TextButton')
+        closeButton.Size = UDim2.fromOffset(18, 22)
+        closeButton.Position = UDim2.new(1, -18, 0, 0)
+        closeButton.BackgroundTransparency = 1
+        closeButton.BorderSizePixel = 0
+        closeButton.Font = Enum.Font.GothamMedium
+        closeButton.TextSize = 16
+        closeButton.TextColor3 = Color3.fromRGB(240, 240, 240)
+        closeButton.Text = '×'
+        closeButton.AutoButtonColor = false
+        closeButton.ZIndex = 6
+        closeButton.Parent = popout.Holder
+        closeButton.MouseEnter:Connect(function()
+            closeButton.TextColor3 = Color3.fromRGB(255, 95, 95)
+        end)
+        closeButton.MouseLeave:Connect(function()
+            closeButton.TextColor3 = Color3.fromRGB(240, 240, 240)
+        end)
+        closeButton.MouseButton1Click:Connect(function()
+            addClosed = true
+            popout.Holder.Visible = false
+        end)
+    end)
+    task.spawn(function()
+        while rawget(runtimeEnvironment, '__fe_add_popout') == popout do
+            local holder = popout.Holder
+            if not holder or not holder.Parent then
+                break
+            end
+            local visible = true
+            pcall(function()
+                visible = library:IsVisible()
+            end)
+            local wanted = visible and not addClosed
+            if holder.Visible ~= wanted then
+                pcall(function()
+                    holder.Visible = wanted
+                end)
+            end
+            task.wait(0.1)
+        end
+    end)
+    local nameInput = popout:AddInput('fe_custom_skin_name', {
+        Text = 'skin name',
+        Placeholder = 'my custom skin',
+        Numeric = false,
+        Finished = false,
+        Center = false,
+    })
+    local weaponNames = {}
+    local weaponSource = rawget(runtimeEnvironment, '__fe_ownable_weapons')
+    if type(weaponSource) == 'table' then
+        for _, weaponName in ipairs(weaponSource) do
+            if type(weaponName) == 'string' and weaponName ~= '' then
+                weaponNames[#weaponNames + 1] = weaponName
+            end
+        end
+    end
+    table.sort(weaponNames)
+    if #weaponNames == 0 then
+        weaponNames = { 'Assault Rifle' }
+    end
+    local weaponInput = popout:AddDropdown('fe_custom_skin_weapon', {
+        Text = 'weapon',
+        Values = weaponNames,
+        Multi = false,
+        Default = 1,
+    })
+    local idInput = popout:AddInput('fe_custom_skin_id', {
+        Text = 'asset id',
+        Placeholder = '1234567890',
+        Numeric = false,
+        Finished = false,
+        Center = false,
+    })
+    local textureInput = popout:AddInput('fe_custom_skin_texture', {
+        Text = 'texture id (optional)',
+        Placeholder = '84167100219585',
+        Numeric = false,
+        Finished = false,
+        Center = false,
+    })
+    local function skinsForWeapon(weaponName)
+        local names = { 'none' }
+        if type(weaponName) ~= 'string' or weaponName == '' then
+            return names
+        end
+        if loadCosmeticValidationModules() then
+            local cosmetics = cosmeticValidationLibrary.Cosmetics
+            if type(cosmetics) == 'table' then
+                for name, info in pairs(cosmetics) do
+                    if type(info) == 'table' and info.Type == 'Skin' and info.ItemName == weaponName then
+                        names[#names + 1] = name
+                    end
+                end
+            end
+        end
+        table.sort(names, function(left, right)
+            if left == 'none' then return true end
+            if right == 'none' then return false end
+            return left < right
+        end)
+        return names
+    end
+    local baseInput = popout:AddDropdown('fe_custom_skin_base', {
+        Text = 'base skin (optional)',
+        Values = skinsForWeapon(weaponNames[1]),
+        Multi = false,
+        Default = 1,
+        AllowNull = false,
+    })
+    pcall(function()
+        local weaponOption = getfenv().Options and getfenv().Options.fe_custom_skin_weapon
+        if type(weaponOption) ~= 'table' then
+            return
+        end
+        weaponOption.Changed = function(value)
+            local chosen = value
+            if type(chosen) == 'table' then
+                for _, entry in pairs(chosen) do
+                    if entry ~= nil then
+                        chosen = entry
+                        break
+                    end
+                end
+            end
+            chosen = tostring(chosen or '')
+            local index = tonumber(chosen)
+            if index then
+                chosen = weaponNames[index] or chosen
+            end
+            local values = skinsForWeapon(chosen)
+            pcall(function()
+                baseInput:SetValues(values)
+            end)
+        end
+    end)
+
+    local function readInput(name, fallback)
+        local stored = getfenv().Options and getfenv().Options[name]
+        if type(stored) == 'table' and type(stored.Value) == 'table' then
+            for _, entry in pairs(stored.Value) do
+                if entry ~= nil then
+                    return tostring(entry)
+                end
+            end
+        end
+        if type(stored) == 'table' and stored.Value ~= nil then
+            return tostring(stored.Value)
+        end
+        if type(fallback) == 'table' and fallback.Value ~= nil then
+            return tostring(fallback.Value)
+        end
+        return ''
+    end
+    popout:AddButton('save custom skin', function()
+        local rawName = readInput('fe_custom_skin_name', nameInput)
+        local rawWeapon = readInput('fe_custom_skin_weapon', weaponInput)
+        local weaponIndex = tonumber(rawWeapon)
+        if weaponIndex then
+            rawWeapon = weaponNames[weaponIndex] or rawWeapon
+        end
+        local rawBase = readInput('fe_custom_skin_base', baseInput)
+        local rawId = readInput('fe_custom_skin_id', idInput)
+        local rawTexture = readInput('fe_custom_skin_texture', textureInput)
+        local skinName = string.gsub(rawName, '^%s*(.-)%s*$', '%1')
+        local weaponName = string.gsub(rawWeapon, '^%s*(.-)%s*$', '%1')
+        local baseName = string.gsub(rawBase, '^%s*(.-)%s*$', '%1')
+        if baseName == '' or baseName == 'none' then
+            baseName = nil
+        end
+        if skinName == '' or weaponName == '' then
+            pcall(library.Notify, library, 'custom skin: name and weapon required', 3)
+            return
+        end
+        local saved = runtimeEnvironment.__fe_custom_skins.add(skinName, weaponName, rawId, baseName, rawTexture)
+        if saved then
+            pcall(library.Notify, library, 'custom skin saved: ' .. skinName, 3)
+            local refresh = runtimeEnvironment.__fe_cosmetic_refresh
+            if type(refresh) == 'function' then
+                pcall(refresh)
+            end
+        else
+            local reason = runtimeEnvironment.__fe_custom_skin_error
+            if type(reason) == 'string' and reason ~= '' then
+                pcall(library.Notify, library, 'custom skin failed: ' .. reason, 4)
+            else
+                pcall(library.Notify, library, 'custom skin failed: check the weapon name', 4)
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    for _ = 1, 30 do
+        pcall(feRegisterAllCustomSkins)
+        local playerScripts = runtimePlayerScripts or runtimeLocalPlayer:FindFirstChild('PlayerScripts')
+        local assets = playerScripts and playerScripts:FindFirstChild('Assets')
+        if assets and assets:FindFirstChild('ViewModels') then
+            break
+        end
+        task.wait(1)
+    end
+end)
+
 local runtimeGeneration = {}
 runtimeEnvironment.__UEDEOBF_GENERATION = runtimeGeneration
 local runtimeConnections = setmetatable({}, { __mode = 'k' })
@@ -18888,6 +20552,129 @@ local function directEntry(...)
         sharedSlot1_97.current.Rounding = 0
         sharedSlot1_97.current.Compact = true
         sharedSlot1_94.current(sharedSlot1_95.current, sharedSlot1_96.current, sharedSlot1_97.current)
+        sharedSlot1_95.current = sharedSlot1_93.current
+        sharedSlot1_94.current = sharedSlot1_93.current.AddToggle
+        sharedSlot1_96.current = "exploits_melee_cooldown"
+        sharedSlot1_97.current = {}
+        sharedSlot1_97.current.Text = "melee cooldown"
+        sharedSlot1_97.current.Tooltip = "scales melee/knife attack cooldown"
+        sharedSlot1_97.current.Default = false
+        sharedSlot1_94.current(sharedSlot1_95.current, sharedSlot1_96.current, sharedSlot1_97.current)
+        sharedSlot1_95.current = sharedSlot1_93.current
+        sharedSlot1_94.current = sharedSlot1_93.current.AddSlider
+        sharedSlot1_96.current = "exploits_melee_cooldown_value"
+        sharedSlot1_97.current = {}
+        sharedSlot1_97.current.Text = "melee cooldown"
+        sharedSlot1_97.current.Default = 35
+        sharedSlot1_97.current.Min = 0
+        sharedSlot1_97.current.Max = 100
+        sharedSlot1_97.current.Suffix = "%"
+        sharedSlot1_97.current.Rounding = 0
+        sharedSlot1_97.current.Compact = true
+        sharedSlot1_94.current(sharedSlot1_95.current, sharedSlot1_96.current, sharedSlot1_97.current)
+        sharedSlot1_95.current = sharedSlot1_93.current
+        sharedSlot1_94.current = sharedSlot1_93.current.AddToggle
+        sharedSlot1_96.current = "exploits_dash_cooldown"
+        sharedSlot1_97.current = {}
+        sharedSlot1_97.current.Text = "dash cooldown"
+        sharedSlot1_97.current.Tooltip = "scales item dash cooldown"
+        sharedSlot1_97.current.Default = false
+        sharedSlot1_94.current(sharedSlot1_95.current, sharedSlot1_96.current, sharedSlot1_97.current)
+        sharedSlot1_95.current = sharedSlot1_93.current
+        sharedSlot1_94.current = sharedSlot1_93.current.AddSlider
+        sharedSlot1_96.current = "exploits_dash_cooldown_value"
+        sharedSlot1_97.current = {}
+        sharedSlot1_97.current.Text = "dash cooldown"
+        sharedSlot1_97.current.Default = 35
+        sharedSlot1_97.current.Min = 0
+        sharedSlot1_97.current.Max = 100
+        sharedSlot1_97.current.Suffix = "%"
+        sharedSlot1_97.current.Rounding = 0
+        sharedSlot1_97.current.Compact = true
+        sharedSlot1_94.current(sharedSlot1_95.current, sharedSlot1_96.current, sharedSlot1_97.current)
+        local exploits_cooldowns = function()
+            local env = getfenv()
+            local players = game:GetService("Players")
+            local function flag_on(flag)
+                local container = env.Toggles
+                local element = container and container[flag]
+                return element and element.Value == true or false
+            end
+            local function flag_value(flag)
+                local container = env.Options
+                local element = container and container[flag]
+                if element then
+                    return element.Value
+                end
+                return nil
+            end
+            local function controller()
+                local cached = getgenv().__fe_fighter_controller
+                if cached then
+                    return cached
+                end
+                local player = players.LocalPlayer
+                local player_scripts = player and player:FindFirstChild("PlayerScripts")
+                local controllers = player_scripts and player_scripts:FindFirstChild("Controllers")
+                local module = controllers and controllers:FindFirstChild("FighterController")
+                if not module then
+                    local modules = game:GetService("ReplicatedStorage"):FindFirstChild("Modules")
+                    module = modules and modules:FindFirstChild("FighterController")
+                end
+                if not module then
+                    return nil
+                end
+                local ok, loaded = pcall(require, module)
+                if not ok or type(loaded) ~= "table" then
+                    return nil
+                end
+                getgenv().__fe_fighter_controller = loaded
+                return loaded
+            end
+            local melee_base = {}
+            local dash_base = {}
+            task.spawn(function()
+                while true do
+                    task.wait(0.1)
+                    local loaded = controller()
+                    local fighter = loaded and loaded.LocalFighter
+                    local items = fighter and fighter.Items
+                    if type(items) == "table" then
+                        local melee_on = flag_on("exploits_melee_cooldown")
+                        local melee_scale = (tonumber(flag_value("exploits_melee_cooldown_value")) or 35) / 100
+                        local dash_on = flag_on("exploits_dash_cooldown")
+                        local dash_scale = (tonumber(flag_value("exploits_dash_cooldown_value")) or 35) / 100
+                        if melee_scale > 1 then
+                            melee_scale = 1
+                        end
+                        if dash_scale > 1 then
+                            dash_scale = 1
+                        end
+                        for _, item in ipairs(items) do
+                            local info = item.Info
+                            if type(info) == "table" then
+                                if (info.Type == "Melee" or item.Name == "Knife") and type(info.AttackCooldown) == "number" then
+                                    if melee_base[item] == nil then
+                                        melee_base[item] = info.AttackCooldown
+                                    end
+                                    info.AttackCooldown = melee_on and melee_base[item] * melee_scale or melee_base[item]
+                                end
+                                if type(info.DashCooldown) == "number" then
+                                    if dash_base[item] == nil then
+                                        dash_base[item] = info.DashCooldown
+                                    end
+                                    info.DashCooldown = dash_on and dash_base[item] * dash_scale or dash_base[item]
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+        getfenv().task.defer(function()
+            pcall(exploits_cooldowns)
+        end)
+
         sharedSlot1_92.current = sharedSlot1_90.current.main
         sharedSlot1_93.current = sharedSlot1_92.current
         sharedSlot1_92.current = sharedSlot1_92.current.AddRightTabbox
@@ -18955,6 +20742,61 @@ local function directEntry(...)
         sharedSlot1_98.current.Suffix = "s"
         sharedSlot1_98.current.Tooltip = "the amount of time attacking before hiding again"
         sharedSlot1_98.current.Rounding = 2
+        sharedSlot1_98.current.Compact = true
+        sharedSlot1_95.current(sharedSlot1_96.current, sharedSlot1_97.current, sharedSlot1_98.current)
+        sharedSlot1_95.current = sharedSlot1_93.current
+        sharedSlot1_94.current = sharedSlot1_93.current.AddDependencyBox
+        sharedSlot1_94.current = sharedSlot1_94.current(sharedSlot1_95.current)
+        sharedSlot1_96.current = sharedSlot1_94.current
+        sharedSlot1_95.current = sharedSlot1_94.current.SetupDependencies
+        sharedSlot1_97.current = table.create(1)
+        sharedSlot1_98.current = table.create(2)
+        sharedSlot1_99.current = getfenv().Toggles
+        sharedSlot1_99.current = sharedSlot1_99.current.ragebot_void_spam
+        localSlot1_100 = true
+        sharedSlot1_98.current[1] = sharedSlot1_99.current
+        sharedSlot1_98.current[2] = localSlot1_100
+        sharedSlot1_97.current[1] = sharedSlot1_98.current
+        sharedSlot1_95.current(sharedSlot1_96.current, sharedSlot1_97.current)
+        sharedSlot1_96.current = sharedSlot1_94.current
+        sharedSlot1_95.current = sharedSlot1_94.current.AddToggle
+        sharedSlot1_97.current = "ragebot_medkit_hide"
+        sharedSlot1_98.current = {}
+        sharedSlot1_98.current.Text = "medkit hide"
+        sharedSlot1_98.current.Default = false
+        sharedSlot1_95.current(sharedSlot1_96.current, sharedSlot1_97.current, sharedSlot1_98.current)
+        sharedSlot1_95.current = sharedSlot1_93.current
+        sharedSlot1_94.current = sharedSlot1_93.current.AddDependencyBox
+        sharedSlot1_94.current = sharedSlot1_94.current(sharedSlot1_95.current)
+        sharedSlot1_96.current = sharedSlot1_94.current
+        sharedSlot1_95.current = sharedSlot1_94.current.SetupDependencies
+        sharedSlot1_97.current = table.create(2)
+        sharedSlot1_98.current = table.create(2)
+        sharedSlot1_99.current = getfenv().Toggles
+        sharedSlot1_99.current = sharedSlot1_99.current.ragebot_void_spam
+        localSlot1_100 = true
+        sharedSlot1_98.current[1] = sharedSlot1_99.current
+        sharedSlot1_98.current[2] = localSlot1_100
+        sharedSlot1_97.current[1] = sharedSlot1_98.current
+        sharedSlot1_98.current = table.create(2)
+        sharedSlot1_99.current = getfenv().Toggles
+        sharedSlot1_99.current = sharedSlot1_99.current.ragebot_medkit_hide
+        localSlot1_100 = true
+        sharedSlot1_98.current[1] = sharedSlot1_99.current
+        sharedSlot1_98.current[2] = localSlot1_100
+        sharedSlot1_97.current[2] = sharedSlot1_98.current
+        sharedSlot1_95.current(sharedSlot1_96.current, sharedSlot1_97.current)
+        sharedSlot1_96.current = sharedSlot1_94.current
+        sharedSlot1_95.current = sharedSlot1_94.current.AddSlider
+        sharedSlot1_97.current = "ragebot_medkit_hide_health"
+        sharedSlot1_98.current = {}
+        sharedSlot1_98.current.Text = "health"
+        sharedSlot1_98.current.Default = 60
+        sharedSlot1_98.current.Min = 1
+        sharedSlot1_98.current.Max = 150
+        sharedSlot1_98.current.Suffix = "hp"
+        sharedSlot1_98.current.Tooltip = "below this health it hides and heals with a medkit"
+        sharedSlot1_98.current.Rounding = 0
         sharedSlot1_98.current.Compact = true
         sharedSlot1_95.current(sharedSlot1_96.current, sharedSlot1_97.current, sharedSlot1_98.current)
         sharedSlot1_95.current = sharedSlot1_93.current
@@ -24460,6 +26302,402 @@ local function directEntry(...)
         sharedSlot1_97.current.Default = "computer"
         sharedSlot1_97.current.Text = "device"
         sharedSlot1_94.current(sharedSlot1_95.current, sharedSlot1_96.current, sharedSlot1_97.current)
+        do
+            local spoofTab = sharedSlot1_93.current
+            local spoofUiOk = pcall(function()
+            spoofTab.AddToggle(spoofTab, "spoof_verified_badge", { Text = "verified badge", Default = false })
+            spoofTab.AddToggle(spoofTab, "spoof_roblox_employee", { Text = "roblox employee", Default = false })
+            spoofTab.AddToggle(spoofTab, "spoof_influencer", { Text = "influencer", Default = false })
+            spoofTab.AddToggle(spoofTab, "spoof_nametag", { Text = "nametag spoof", Default = false })
+            spoofTab.AddDropdown(spoofTab, "spoof_nametag_status", { Text = "nametag status", Values = { "Prime", "Contraband" }, Default = "Prime", AllowNull = false })
+            spoofTab.AddToggle(spoofTab, "spoof_fps", { Text = "spoof fps", Default = false })
+            spoofTab.AddInput(spoofTab, "spoof_fps_value", { Text = "fps", Placeholder = "240", Clear = false })
+            spoofTab.AddToggle(spoofTab, "spoof_ping", { Text = "spoof ping", Default = false })
+            spoofTab.AddInput(spoofTab, "spoof_ping_value", { Text = "ping", Placeholder = "20", Clear = false })
+            spoofTab.AddToggle(spoofTab, "spoof_region", { Text = "spoof region", Default = false })
+            spoofTab.AddInput(spoofTab, "spoof_region_value", { Text = "region", Placeholder = "Singapore", Clear = false })
+            spoofTab.AddToggle(spoofTab, "spoof_avatar", { Text = "avatar spoof", Default = false })
+            spoofTab.AddInput(spoofTab, "spoof_avatar_userid", { Text = "user id", Placeholder = "1", Clear = false })
+            end)
+            if not spoofUiOk then
+                spoofTab = nil
+            end
+        end
+        local spoofExtras = function()
+            local spoofPlayers = game:GetService("Players")
+            getgenv().__fe_name_store = getgenv().__fe_name_store or {}
+            local spoofRun = game:GetService("RunService")
+            local spoofPlayer = spoofPlayers.LocalPlayer
+            local spoofTask = getfenv().task or task
+            local function spoofToggle(name)
+                local container = getfenv().Toggles
+                local element = container and container[name]
+                return element and element.Value == true or false
+            end
+            local function spoofValue(name)
+                local container = getfenv().Options
+                local element = container and container[name]
+                if element then
+                    return element.Value
+                end
+                return nil
+            end
+            local function spoofWrap(fn)
+                local wrap = getfenv().newcclosure
+                if type(wrap) == "function" then
+                    local ok, wrapped = pcall(wrap, fn)
+                    if ok and wrapped then
+                        return wrapped
+                    end
+                end
+                return fn
+            end
+            local spoofBadgeHooked
+            local spoofBadgePrevious
+            local function spoofBadgeSync()
+                local hook = getfenv().hookmetamethod
+                if type(hook) ~= "function" then
+                    return
+                end
+                local wanted = spoofToggle("spoof_verified_badge")
+                if wanted and not spoofBadgeHooked then
+                    spoofBadgePrevious = hook(game, "__index", spoofWrap(function(self, key)
+                        if self == spoofPlayer and key == "HasVerifiedBadge" then
+                            return true
+                        end
+                        if spoofBadgePrevious then
+                            return spoofBadgePrevious(self, key)
+                        end
+                    end))
+                    spoofBadgeHooked = true
+                elseif not wanted and spoofBadgeHooked then
+                    if spoofBadgePrevious then
+                        pcall(hook, game, "__index", spoofBadgePrevious)
+                    end
+                    spoofBadgeHooked = nil
+                    spoofBadgePrevious = nil
+                end
+            end
+            local spoofApplyLabels
+            local spoofConnectionLabel
+            local spoofRegionLabel
+            local spoofRealRegion
+            local spoofConnectionWatcher
+            local spoofRegionWatcher
+            local spoofRegionForced = false
+            local function spoofResolveLabels()
+                local playerGui = spoofPlayer:FindFirstChild("PlayerGui")
+                local insetGui = playerGui and playerGui:FindFirstChild("InsetGui")
+                local mainFrame = insetGui and insetGui:FindFirstChild("MainFrame")
+                local container = mainFrame and mainFrame:FindFirstChild("Container")
+                local rightButtons = container and container:FindFirstChild("RightButtons")
+                local details = rightButtons and rightButtons:FindFirstChild("Details")
+                local detailsContainer = details and details:FindFirstChild("Container")
+                local connection = detailsContainer and detailsContainer:FindFirstChild("Connection")
+                local region = detailsContainer and detailsContainer:FindFirstChild("ServerRegion")
+                local connectionTitle = connection and connection:FindFirstChild("Title")
+                local regionTitle = region and region:FindFirstChild("Title")
+                if connectionTitle and connectionTitle ~= spoofConnectionLabel then
+                    if spoofConnectionWatcher then
+                        pcall(spoofConnectionWatcher.Disconnect, spoofConnectionWatcher)
+                    end
+                    spoofConnectionLabel = connectionTitle
+                    spoofConnectionWatcher = connectionTitle:GetPropertyChangedSignal("Text"):Connect(function()
+                        if spoofApplyLabels then
+                            pcall(spoofApplyLabels)
+                        end
+                    end)
+                end
+                if regionTitle and regionTitle ~= spoofRegionLabel then
+                    if spoofRegionWatcher then
+                        pcall(spoofRegionWatcher.Disconnect, spoofRegionWatcher)
+                    end
+                    spoofRegionLabel = regionTitle
+                    spoofRealRegion = regionTitle.Text
+                    spoofRegionWatcher = regionTitle:GetPropertyChangedSignal("Text"):Connect(function()
+                        if spoofApplyLabels then
+                            pcall(spoofApplyLabels)
+                        end
+                    end)
+                end
+            end
+            spoofResolveLabels()
+            spoofTask.spawn(function()
+                while true do
+                    spoofTask.wait(1)
+                    pcall(spoofResolveLabels)
+                end
+            end)
+            spoofApplyLabels = function()
+                local connection = spoofConnectionLabel
+                if connection and connection.Parent then
+                    local current = connection.Text
+                    local fpsText, pingText = string.match(current, "(%d+)fps%s+(%d+)ms")
+                    if fpsText and pingText then
+                        local useFps = fpsText
+                        local usePing = pingText
+                        local fpsSpoof = spoofValue("spoof_fps_value")
+                        local pingSpoof = spoofValue("spoof_ping_value")
+                        if spoofToggle("spoof_fps") and fpsSpoof ~= nil and tostring(fpsSpoof) ~= "" then
+                            useFps = tostring(math.floor(tonumber(fpsSpoof) or tonumber(fpsText) or 0))
+                        end
+                        if spoofToggle("spoof_ping") and pingSpoof ~= nil and tostring(pingSpoof) ~= "" then
+                            usePing = tostring(math.floor(tonumber(pingSpoof) or tonumber(pingText) or 0))
+                        end
+                        if spoofToggle("spoof_fps") or spoofToggle("spoof_ping") then
+                            local wanted = useFps .. "fps   " .. usePing .. "ms"
+                            if current ~= wanted then
+                                connection.Text = wanted
+                            end
+                        end
+                    end
+                end
+                local region = spoofRegionLabel
+                if region and region.Parent then
+                    local regionSpoof = spoofValue("spoof_region_value")
+                    if spoofToggle("spoof_region") and type(regionSpoof) == "string" and regionSpoof ~= "" then
+                        if not spoofRegionForced then
+                            spoofRealRegion = region.Text
+                            spoofRegionForced = true
+                        end
+                        if region.Text ~= regionSpoof then
+                            region.Text = regionSpoof
+                        end
+                    elseif spoofRegionForced then
+                        if spoofRealRegion and region.Text ~= spoofRealRegion then
+                            region.Text = spoofRealRegion
+                        end
+                        spoofRegionForced = false
+                    end
+                end
+            end
+            local spoofLastNameState
+            spoofTask.spawn(function()
+                while true do
+                    spoofTask.wait(0.1)
+                    pcall(spoofBadgeSync)
+                    pcall(spoofApplyLabels)
+                    local nameState = tostring(spoofToggle("name_spoofer")) .. "|" .. tostring(spoofValue("name_spoofer_name")) .. "|" .. tostring(spoofToggle("name_spoof_others")) .. "|" .. tostring(spoofValue("name_spoof_others_name"))
+                    if spoofLastNameState == nil then
+                        spoofLastNameState = nameState
+                    elseif spoofLastNameState ~= nameState then
+                        spoofLastNameState = nameState
+                        spoofUiDirty = true
+                    end
+                    if spoofUiDirty then
+                        spoofUiDirty = false
+                        pcall(spoofRefreshUi)
+                    end
+                end
+            end)
+            local spoofUiDirty = false
+            local function spoofController()
+                local cached = getgenv().__fe_fighter_controller
+                if cached then
+                    return cached
+                end
+                local scripts = spoofPlayer:FindFirstChild("PlayerScripts")
+                local controllers = scripts and scripts:FindFirstChild("Controllers")
+                local module = controllers and controllers:FindFirstChild("FighterController")
+                if not module then
+                    return nil
+                end
+                local ok, loaded = pcall(require, module)
+                if not ok or type(loaded) ~= "table" then
+                    return nil
+                end
+                getgenv().__fe_fighter_controller = loaded
+                return loaded
+            end
+            local function spoofRefreshUi()
+                local controller = spoofController()
+                local map = controller and controller._player_to_fighter
+                if type(map) == "table" then
+                    for _, fighter in pairs(map) do
+                        local entity = type(fighter) == "table" and fighter.Entity
+                        local nametag = entity and entity.CustomNametag
+                        if nametag and type(nametag._Refresh) == "function" then
+                            pcall(nametag._Refresh, nametag)
+                        end
+                    end
+                end
+                local ok, list = pcall(require, spoofPlayer.PlayerScripts.Modules.UserInterface.PlayerList)
+                if ok and type(list) == "table" then
+                    local slots = list.Elements and list.Elements.PlayerListSlots
+                    if type(slots) == "table" then
+                        for _, slot in pairs(slots) do
+                            if type(slot) == "table" and type(slot._UpdateLeaderstat) == "function" then
+                                pcall(slot._UpdateLeaderstat, slot)
+                            end
+                        end
+                    end
+                end
+            end
+            local spoofAttributeEntries = {
+                { attribute = "IsRobloxEmployee", toggle = "spoof_roblox_employee", value = true },
+                { attribute = "IsInfluencer", toggle = "spoof_influencer", value = true },
+                { attribute = "PlayerStatus", toggle = "spoof_nametag", value = function()
+                    return spoofValue("spoof_nametag_status") or "Prime"
+                end }
+            }
+            local function spoofApplyAttribute(entry)
+                if not spoofToggle(entry.toggle) then
+                    return
+                end
+                local target = entry.value
+                if type(target) == "function" then
+                    target = target()
+                end
+                if spoofPlayer:GetAttribute(entry.attribute) ~= target then
+                    spoofPlayer:SetAttribute(entry.attribute, target)
+                    spoofUiDirty = true
+                end
+                entry.applied = true
+            end
+            for _, entry in ipairs(spoofAttributeEntries) do
+                entry.original = spoofPlayer:GetAttribute(entry.attribute)
+                entry.applied = false
+                local attribute = entry.attribute
+                pcall(function()
+                    spoofPlayer:GetAttributeChangedSignal(attribute):Connect(function()
+                        pcall(spoofApplyAttribute, entry)
+                    end)
+                end)
+            end
+            spoofRun.Heartbeat:Connect(function()
+                for _, entry in ipairs(spoofAttributeEntries) do
+                    if spoofToggle(entry.toggle) then
+                        spoofApplyAttribute(entry)
+                    elseif entry.applied then
+                        spoofPlayer:SetAttribute(entry.attribute, entry.original)
+                        entry.applied = false
+                    end
+                end
+            end)
+            local function spoofApplyAvatar(userId)
+                local character = spoofPlayer.Character
+                if not character then
+                    return
+                end
+                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                if not humanoid then
+                    return
+                end
+                local description = spoofPlayers:GetHumanoidDescriptionFromUserIdAsync(userId)
+                local model = spoofPlayers:CreateHumanoidModelFromDescriptionAsync(description, humanoid.RigType)
+                local newPants = model:FindFirstChild("Pants")
+                local pants = character:FindFirstChild("Pants")
+                if newPants then
+                    if not pants then
+                        pants = Instance.new("Pants")
+                        pants.Name = "Pants"
+                        pants.Parent = character
+                    end
+                    pants.PantsTemplate = newPants.PantsTemplate
+                elseif pants then
+                    pants:Destroy()
+                end
+                local newShirt = model:FindFirstChild("Shirt")
+                local shirt = character:FindFirstChild("Shirt")
+                if newShirt then
+                    if not shirt then
+                        shirt = Instance.new("Shirt")
+                        shirt.Name = "Shirt"
+                        shirt.Parent = character
+                    end
+                    shirt.ShirtTemplate = newShirt.ShirtTemplate
+                elseif shirt then
+                    shirt:Destroy()
+                end
+                local newGraphic = model:FindFirstChildWhichIsA("ShirtGraphic")
+                local graphic = character:FindFirstChildWhichIsA("ShirtGraphic")
+                if newGraphic then
+                    if not graphic then
+                        graphic = Instance.new("ShirtGraphic")
+                        graphic.Name = "Shirt Graphic"
+                        graphic.Parent = character
+                    end
+                    graphic.Graphic = newGraphic.Graphic
+                elseif graphic then
+                    graphic:Destroy()
+                end
+                local newColors = model:FindFirstChildWhichIsA("BodyColors")
+                local bodyColors = character:FindFirstChild("Body Colors") or character:FindFirstChildWhichIsA("BodyColors")
+                if newColors then
+                    if not bodyColors then
+                        bodyColors = Instance.new("BodyColors")
+                        bodyColors.Name = "Body Colors"
+                        bodyColors.Parent = character
+                    end
+                    for _, part in ipairs({ "Head", "RightLeg", "LeftLeg", "RightArm", "LeftArm", "Torso" }) do
+                        bodyColors[part .. "Color3"] = newColors[part .. "Color3"]
+                    end
+                elseif bodyColors then
+                    bodyColors:Destroy()
+                end
+                for _, child in ipairs(character:GetChildren()) do
+                    if child:IsA("Accessory") then
+                        child:Destroy()
+                    end
+                end
+                for _, child in ipairs(model:GetChildren()) do
+                    if child:IsA("Accessory") then
+                        local clone = child:Clone()
+                        for _, descendant in ipairs(clone:GetDescendants()) do
+                            if descendant:IsA("Weld") then
+                                if descendant.Part0 and character:FindFirstChild(descendant.Part0.Name) then
+                                    descendant.Part0 = character[descendant.Part0.Name]
+                                elseif descendant.Part1 and character:FindFirstChild(descendant.Part1.Name) then
+                                    descendant.Part1 = character[descendant.Part1.Name]
+                                end
+                            end
+                        end
+                        clone.Parent = character
+                    end
+                end
+                local newHead = model:FindFirstChild("Head")
+                local head = character:FindFirstChild("Head")
+                if newHead and head then
+                    if newHead:IsA("MeshPart") and head:IsA("MeshPart") then
+                        pcall(head.ApplyMesh, head, newHead)
+                    elseif newHead:IsA("Part") and head:IsA("Part") then
+                        local newMesh = newHead:FindFirstChildWhichIsA("SpecialMesh")
+                        local mesh = head:FindFirstChildWhichIsA("SpecialMesh")
+                        if newMesh and mesh then
+                            mesh.MeshId = newMesh.MeshId
+                            mesh.TextureId = newMesh.TextureId
+                        end
+                    end
+                end
+                model:Destroy()
+            end
+            local spoofAvatarAppliedFor = nil
+            spoofPlayer.CharacterAdded:Connect(function()
+                if spoofToggle("spoof_avatar") then
+                    spoofTask.wait(0.5)
+                    local userId = tonumber(spoofValue("spoof_avatar_userid")) or 1
+                    pcall(spoofApplyAvatar, userId)
+                end
+            end)
+            spoofTask.spawn(function()
+                while true do
+                    spoofTask.wait(1)
+                    local userId = tonumber(spoofValue("spoof_avatar_userid")) or 1
+                    if spoofToggle("spoof_avatar") then
+                        if spoofAvatarAppliedFor ~= userId and spoofPlayer.Character then
+                            spoofAvatarAppliedFor = userId
+                            pcall(spoofApplyAvatar, userId)
+                        end
+                    else
+                        spoofAvatarAppliedFor = nil
+                    end
+                end
+            end)
+        end
+        getfenv().task.defer(function()
+            pcall(spoofExtras)
+        end)
+
         sharedSlot1_92.current = sharedSlot1_90.current.misc
         sharedSlot1_93.current = sharedSlot1_92.current
         sharedSlot1_92.current = sharedSlot1_92.current.AddRightTabbox
@@ -33723,9 +35961,11 @@ local function directEntry(...)
                                                                                     local targetName
                                                                                     if targetPlayer then
                                                                                         targetName = targetPlayer.Name
-                                                                                    else
+                                                                                        elseif targetCharacter then
                                                                                         targetName = targetCharacter.Name
-                                                                                    end
+                                                                                        else
+                                                                                            targetName = '?'
+                                                                                        end
                                                                                     local localCharacterRecord = readLocalCharacterRecord()
                                                                                     local equippedItem = localCharacterRecord.EquippedItem
                                                                                     local weaponName
@@ -36666,7 +38906,7 @@ local function directEntry(...)
                                                                                                                                                     
                                                                                                                                                     local function ragebot_void_spam_status(status)
                                                                                                                                                         if voidSpamValue then
-                                                                                                                                                            return "void spam " .. status
+                                                                                                                                                            return "void hide " .. status
                                                                                                                                                         end
                                                                                                                                                         return status
                                                                                                                                                     end
@@ -36690,7 +38930,7 @@ local function directEntry(...)
                                                                                                                                                     end
                                                                                                                                                     local knifeLastTarget
                                                                                                                                                     local knifeAttackReadyAt = 0
-                                                                                                                                                    local workerInterval = 0.5
+                                                                                                                                                    local workerInterval = 0.15
                                                                                                                                                     local snapshotP566Capture2 = ragebot_store_value3
                                                                                                                                                     local snapshotP566Capture6 = workerInterval
                                                                                                                                                     local snapshotP566Capture10 = useItemRemote
@@ -37091,8 +39331,204 @@ local function directEntry(...)
                                                                                                                                                     local snapshotP583Capture8 = duelCache
                                                                                                                                                     local snapshotP583Capture10 = indicatorToggle
                                                                                                                                                     local snapshotP583Capture11 = indicatorStyle
+                                                                                                                                                    local medkitStage
+                                                                                                                                                    local medkitStageAt = 0
+                                                                                                                                                    local medkitReturnSlot
+                                                                                                                                                    local medkitHealthAtUse
+                                                                                                                                                    local medkitAttempts = 0
+                                                                                                                                                    local medkitHidden = false
+                                                                                                                                                    local medkitVoidCFrame
+                                                                                                                                                    local function ragebot_option_element(container, flag)
+                                                                                                                                                        if type(container) ~= "table" then
+                                                                                                                                                            return nil
+                                                                                                                                                        end
+                                                                                                                                                        local ok, element = pcall(function()
+                                                                                                                                                            return container[flag]
+                                                                                                                                                        end)
+                                                                                                                                                        if ok then
+                                                                                                                                                            return element
+                                                                                                                                                        end
+                                                                                                                                                        return rawget(container, flag)
+                                                                                                                                                    end
+                                                                                                                                                    local function ragebot_medkit_threshold()
+                                                                                                                                                        local toggle = ragebot_option_element(Toggles, "ragebot_medkit_hide")
+                                                                                                                                                        if not toggle or not toggle.Value then
+                                                                                                                                                            medkitStage = nil
+                                                                                                                                                            return nil
+                                                                                                                                                        end
+                                                                                                                                                        if not voidSpamValue then
+                                                                                                                                                            return nil
+                                                                                                                                                        end
+                                                                                                                                                        local healthSlider = ragebot_option_element(Options, "ragebot_medkit_hide_health")
+                                                                                                                                                        local threshold = 35
+                                                                                                                                                        if healthSlider and type(healthSlider.Value) == "number" then
+                                                                                                                                                            threshold = healthSlider.Value
+                                                                                                                                                        end
+                                                                                                                                                        return threshold
+                                                                                                                                                    end
+                                                                                                                                                    local function ragebot_find_medkit()
+                                                                                                                                                        local items = neutralDependency11 and neutralDependency11.Items
+                                                                                                                                                        if type(items) ~= "table" then
+                                                                                                                                                            return nil
+                                                                                                                                                        end
+                                                                                                                                                        for _, candidate in ipairs(items) do
+                                                                                                                                                            local name = candidate.Name
+                                                                                                                                                            if type(name) == "string" and name:lower():find("medkit", 1, true) then
+                                                                                                                                                                return candidate
+                                                                                                                                                            end
+                                                                                                                                                        end
+                                                                                                                                                    end
+                                                                                                                                                    local function ragebot_medkit_cooldown(item)
+                                                                                                                                                        local cooldownUntil = item._use_cooldown
+                                                                                                                                                        if type(cooldownUntil) ~= "number" then
+                                                                                                                                                            return 0
+                                                                                                                                                        end
+                                                                                                                                                        return math.max(cooldownUntil - tick(), 0)
+                                                                                                                                                    end
+                                                                                                                                                    local function ragebot_medkit_health()
+                                                                                                                                                        local fighter = neutralDependency11
+                                                                                                                                                        if type(fighter) == "table" then
+                                                                                                                                                            local okHealth, health = pcall(fighter.GetHealth, fighter)
+                                                                                                                                                            local okMax, maxHealth = pcall(fighter.GetMaxHealth, fighter)
+                                                                                                                                                            if okHealth and okMax and type(health) == "number" and type(maxHealth) == "number" and maxHealth > 0 then
+                                                                                                                                                                return health, maxHealth
+                                                                                                                                                            end
+                                                                                                                                                        end
+                                                                                                                                                        local character = currentCharacter or localPlayer.Character
+                                                                                                                                                        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                                                                                                                                                        if humanoid and humanoid.MaxHealth > 0 then
+                                                                                                                                                            return humanoid.Health, humanoid.MaxHealth
+                                                                                                                                                        end
+                                                                                                                                                        return nil, nil
+                                                                                                                                                    end
+                                                                                                                                                    local function ragebot_use_medkit(item, methodName, actionName)
+                                                                                                                                                        local method = item[methodName]
+                                                                                                                                                        if type(method) == "function" then
+                                                                                                                                                            pcall(method, item)
+                                                                                                                                                        end
+                                                                                                                                                        if not snapshotP566Capture10 or not neutralDependency14 then
+                                                                                                                                                            return false
+                                                                                                                                                        end
+                                                                                                                                                        local ok = pcall(function()
+                                                                                                                                                            neutralDependency13(snapshotP566Capture10, item:Get("ObjectID"), neutralDependency14:ToEnum(actionName), {}, nil)
+                                                                                                                                                        end)
+                                                                                                                                                        return ok
+                                                                                                                                                    end
+                                                                                                                                                        local function ragebot_medkit_hide(deltaTime)
+                                                                                                                                                            local threshold = ragebot_medkit_threshold()
+                                                                                                                                                            if not threshold then
+                                                                                                                                                                return nil
+                                                                                                                                                            end
+                                                                                                                                                            local health, maxHealth = ragebot_medkit_health()
+                                                                                                                                                            if not health or not maxHealth then
+                                                                                                                                                                medkitStage = nil
+                                                                                                                                                                return nil
+                                                                                                                                                            end
+                                                                                                                                                            local percent = health / maxHealth * 100
+                                                                                                                                                            local medkit = ragebot_find_medkit()
+                                                                                                                                                            local function ensureHidden()
+                                                                                                                                                                if not medkitHidden then
+                                                                                                                                                                    medkitHidden = true
+                                                                                                                                                                    medkitVoidCFrame = selectedAttackResolver()
+                                                                                                                                                                    ragebot_store_value3(medkitVoidCFrame)
+                                                                                                                                                                end
+                                                                                                                                                            end
+                                                                                                                                                            local function hideNow()
+                                                                                                                                                                medkitVoidCFrame = selectedAttackResolver()
+                                                                                                                                                                ragebot_store_value3(medkitVoidCFrame)
+                                                                                                                                                            end
+                                                                                                                                                            local function finishMedkit(endText)
+                                                                                                                                                                medkitStage = nil
+                                                                                                                                                                medkitHealthAtUse = nil
+                                                                                                                                                                medkitAttempts = 0
+                                                                                                                                                                medkitHidden = false
+                                                                                                                                                                medkitVoidCFrame = nil
+                                                                                                                                                                local returnSlot = medkitReturnSlot
+                                                                                                                                                                medkitReturnSlot = nil
+                                                                                                                                                                ragebot_store_value3(nil)
+                                                                                                                                                                if type(returnSlot) == "number" then
+                                                                                                                                                                    task.spawn(neutralDependency11.EquipItem, neutralDependency11, returnSlot)
+                                                                                                                                                                end
+                                                                                                                                                                return ragebot_void_spam_status(endText)
+                                                                                                                                                            end
+                                                                                                                                                            local function healthPercent()
+                                                                                                                                                                return string.format("%d%%", math.floor(percent + 0.5))
+                                                                                                                                                            end
+                                                                                                                                                            if medkitStage == "healing" then
+                                                                                                                                                                if medkitVoidCFrame then
+                                                                                                                                                                    ragebot_store_value3(medkitVoidCFrame)
+                                                                                                                                                                end
+                                                                                                                                                                local healed = health >= maxHealth - 0.5 or (medkitHealthAtUse and health > medkitHealthAtUse + 0.5)
+                                                                                                                                                                if healed then
+                                                                                                                                                                    return finishMedkit("healed " .. healthPercent())
+                                                                                                                                                                end
+                                                                                                                                                                if tick() - medkitStageAt > 8.5 then
+                                                                                                                                                                    medkitAttempts = (medkitAttempts or 0) + 1
+                                                                                                                                                                    if medkitAttempts >= 4 then
+                                                                                                                                                                        return finishMedkit("medkit failed")
+                                                                                                                                                                    end
+                                                                                                                                                                    medkitStage = "ready"
+                                                                                                                                                                    ensureHidden()
+                                                                                                                                                                    medkitStageAt = tick()
+                                                                                                                                                                end
+                                                                                                                                                                return ragebot_void_spam_status("medkit healing " .. healthPercent())
+                                                                                                                                                            end
+                                                                                                                                                            if health > threshold then
+                                                                                                                                                                medkitStage = nil
+                                                                                                                                                                medkitAttempts = 0
+                                                                                                                                                                return nil
+                                                                                                                                                            end
+                                                                                                                                                            if not medkit then
+                                                                                                                                                                hideNow()
+                                                                                                                                                                return ragebot_void_spam_status("no medkit")
+                                                                                                                                                            end
+                                                                                                                                                            local cooldown = ragebot_medkit_cooldown(medkit)
+                                                                                                                                                            if cooldown > 0 then
+                                                                                                                                                                hideNow()
+                                                                                                                                                                return ragebot_void_spam_status("waiting for medkit cooldown " .. string.format("%ds", math.ceil(cooldown)))
+                                                                                                                                                            end
+                                                                                                                                                            if medkitStage ~= "ready" then
+                                                                                                                                                                hideNow()
+                                                                                                                                                            end
+                                                                                                                                                            local equipped = neutralDependency11.EquippedItem
+                                                                                                                                                            if equipped ~= medkit then
+                                                                                                                                                                if not medkitReturnSlot and equipped and equipped.Data then
+                                                                                                                                                                    medkitReturnSlot = equipped.Data.ItemIndex
+                                                                                                                                                                end
+                                                                                                                                                                if medkitStage ~= "equipping" or tick() - medkitStageAt > 1.5 then
+                                                                                                                                                                    medkitStage = "equipping"
+                                                                                                                                                                    medkitStageAt = tick()
+                                                                                                                                                                    task.spawn(neutralDependency11.EquipItem, neutralDependency11, medkit.Data.ItemIndex)
+                                                                                                                                                                end
+                                                                                                                                                                return ragebot_void_spam_status("equipping medkit")
+                                                                                                                                                            end
+                                                                                                                                                            if medkitStage ~= "ready" then
+                                                                                                                                                                medkitStage = "ready"
+                                                                                                                                                                medkitStageAt = tick()
+                                                                                                                                                                return ragebot_void_spam_status("medkit ready")
+                                                                                                                                                            end
+                                                                                                                                                            local okEquip, isEquipping = pcall(function()
+                                                                                                                                                                return medkit:IsEquipping()
+                                                                                                                                                            end)
+                                                                                                                                                            if (okEquip and isEquipping) or tick() - medkitStageAt < 0.6 then
+                                                                                                                                                                return ragebot_void_spam_status("medkit ready")
+                                                                                                                                                            end
+                                                                                                                                                            medkitHealthAtUse = health
+                                                                                                                                                            local useMethod = "StartShooting"
+                                                                                                                                                            local useAction = "StartShooting"
+                                                                                                                                                            if (medkitAttempts or 0) >= 2 then
+                                                                                                                                                                useMethod = "StartAiming"
+                                                                                                                                                                useAction = "StartAiming"
+                                                                                                                                                            end
+                                                                                                                                                            medkitStage = "healing"
+                                                                                                                                                            medkitStageAt = tick()
+                                                                                                                                                            ragebot_use_medkit(medkit, useMethod, useAction)
+                                                                                                                                                            return ragebot_void_spam_status("using medkit")
+                                                                                                                                                        end
+
                                                                                                                                                     local function ragebot_execute_attack_cycle(deltaTime)
                                                                                                                                                         ragebotActive = true
+                                                                                                                                                        local medkitStatus = ragebot_medkit_hide(deltaTime)
                                                                                                                                                         local items = neutralDependency11.Items
                                                                                                                                                         local isKnifeMode = ragebotMode == "knife"
                                                                                                                                                         local isMeleeMode = ragebotMode == "melee"
@@ -37128,17 +39564,19 @@ local function directEntry(...)
                                                                                                                                                             workerArgument = gunItems
                                                                                                                                                         end
                                                                                                                                                         local neutralValue1, neutralValue2, neutralValue3, neutralValue4, neutralValue5, neutralValue6 = nil, nil, nil, nil, nil, nil
-                                                                                                                                                        local status
-                                                                                                                                                        if worker then
-                                                                                                                                                            local currentDuel = snapshotP583Capture8.current
-                                                                                                                                                            local duelData = currentDuel and currentDuel.Data
-                                                                                                                                                            local duelStatus = duelData and duelData.Status
-                                                                                                                                                            if duelStatus == "RoundStarted" then
-                                                                                                                                                                neutralValue1, neutralValue2, neutralValue3, neutralValue4, neutralValue5, neutralValue6 = ragebot_select_priority()
+                                                                                                                                                        local status = medkitStatus
+                                                                                                                                                        if not status then
+                                                                                                                                                            if worker then
+                                                                                                                                                                local currentDuel = snapshotP583Capture8.current
+                                                                                                                                                                local duelData = currentDuel and currentDuel.Data
+                                                                                                                                                                local duelStatus = duelData and duelData.Status
+                                                                                                                                                                if duelStatus == "RoundStarted" then
+                                                                                                                                                                    neutralValue1, neutralValue2, neutralValue3, neutralValue4, neutralValue5, neutralValue6 = ragebot_select_priority()
+                                                                                                                                                                end
+                                                                                                                                                                status = worker(workerArgument, neutralValue1, neutralValue3, neutralValue4, deltaTime, neutralValue5, neutralValue2, duelStatus)
+                                                                                                                                                            else
+                                                                                                                                                                status = "invalid weapons for ragebot"
                                                                                                                                                             end
-                                                                                                                                                            status = worker(workerArgument, neutralValue1, neutralValue3, neutralValue4, deltaTime, neutralValue5, neutralValue2, duelStatus)
-                                                                                                                                                        else
-                                                                                                                                                            status = "invalid weapons for ragebot"
                                                                                                                                                         end
                                                                                                                                                         local message = ""
                                                                                                                                                         if snapshotP583Capture10.Value then
@@ -47353,6 +49791,8 @@ local function directEntry(...)
                                 local localSlot139_1, localSlot139_2, localSlot139_3
                                 localSlot139_1 = capturedCell1.current
                                 localSlot139_1 = localSlot139_1 + 180
+                                localSlot139_1 = localSlot139_1 + (getfenv().tick() * 360) % 360
+                                localSlot139_1 = localSlot139_1 % 360
                                 localSlot139_1 = localSlot139_1 / 360
                                 localSlot139_2 = capturedValue1
                                 localSlot139_3 = localSlot139_1 * 1114111
@@ -47516,6 +49956,21 @@ local function directEntry(...)
                     sharedSlot1_137.current = sharedSlot1_128.current
                     sharedSlot1_135.current = sharedSlot1_135.current(sharedSlot1_136.current, sharedSlot1_137.current)
                     sharedSlot1_134.current.EncodeCameraRotation = sharedSlot1_135.current
+                    do
+                        local antiAimTarget = sharedSlot1_134.current
+                        local antiAimEncode = antiAimTarget.EncodeCameraRotation
+                        if type(antiAimEncode) == "function" and not getgenv().__fe_aa_watch then
+                            getgenv().__fe_aa_watch = true
+                            getfenv().task.spawn(function()
+                                while true do
+                                    getfenv().task.wait(1)
+                                    if antiAimTarget.EncodeCameraRotation ~= antiAimEncode then
+                                        pcall(rawset, antiAimTarget, "EncodeCameraRotation", antiAimEncode)
+                                    end
+                                end
+                            end)
+                        end
+                    end
                     sharedSlot1_135.current = {}
                     sharedSlot1_135.current.__index = sharedSlot1_117.current
                     sharedSlot1_130.current(sharedSlot1_131.current, sharedSlot1_132.current, sharedSlot1_133.current(sharedSlot1_134.current, sharedSlot1_135.current))
@@ -48160,9 +50615,19 @@ local function directEntry(...)
                                                                     localSlot388_9 = localSlot388_6.enabled
                                                                     if not localSlot388_9 then
                                                                       localSlot388_9 = capturedValue17140_6[localSlot388_3]
-                                                                      localSlot388_10 = getfenv().unpack
-                                                                      localSlot388_11 = localSlot388_9
-                                                                      localSlot388_10, localSlot388_11 = localSlot388_10(localSlot388_11)
+                                                                      local feSaved = getgenv().__fe_name_store and getgenv().__fe_name_store[localSlot388_3]
+                                                                      if type(localSlot388_9) == "table" then
+                                                                        localSlot388_10 = getfenv().unpack
+                                                                        localSlot388_11 = localSlot388_9
+                                                                        localSlot388_10, localSlot388_11 = localSlot388_10(localSlot388_11)
+                                                                      elseif type(feSaved) == "table" then
+                                                                        localSlot388_10 = feSaved[1]
+                                                                        localSlot388_11 = feSaved[2]
+                                                                        getgenv().__fe_name_store[localSlot388_3] = nil
+                                                                      else
+                                                                        localSlot388_10 = localSlot388_3.Name
+                                                                        localSlot388_11 = localSlot388_3.DisplayName
+                                                                      end
                                                                       localSlot388_7 = localSlot388_10
                                                                       localSlot388_8 = localSlot388_11
                                                                       capturedValue17140_5[localSlot388_3] = localSlot388_0
@@ -48170,6 +50635,12 @@ local function directEntry(...)
                                                                       localSlot388_7 = localSlot388_6.value
                                                                       localSlot388_8 = localSlot388_6.value
                                                                       capturedValue17140_5[localSlot388_3] = true
+                                                                    end
+                                                                    do
+                                                                        local nameStore = getgenv().__fe_name_store
+                                                                        if nameStore and not nameStore[localSlot388_3] then
+                                                                            nameStore[localSlot388_3] = { localSlot388_3.Name, localSlot388_3.DisplayName }
+                                                                        end
                                                                     end
                                                                     localSlot388_3.Name = localSlot388_7
                                                                     localSlot388_3.DisplayName = localSlot388_8
@@ -48200,9 +50671,19 @@ local function directEntry(...)
                                                                       localSlot388_9 = localSlot388_6.enabled
                                                                       if not localSlot388_9 then
                                                                         localSlot388_9 = capturedValue17140_6[localSlot388_3]
-                                                                        localSlot388_10 = getfenv().unpack
-                                                                        localSlot388_11 = localSlot388_9
-                                                                        localSlot388_10, localSlot388_11 = localSlot388_10(localSlot388_11)
+                                                                        local feSaved = getgenv().__fe_name_store and getgenv().__fe_name_store[localSlot388_3]
+                                                                        if type(localSlot388_9) == "table" then
+                                                                          localSlot388_10 = getfenv().unpack
+                                                                          localSlot388_11 = localSlot388_9
+                                                                          localSlot388_10, localSlot388_11 = localSlot388_10(localSlot388_11)
+                                                                        elseif type(feSaved) == "table" then
+                                                                          localSlot388_10 = feSaved[1]
+                                                                          localSlot388_11 = feSaved[2]
+                                                                          getgenv().__fe_name_store[localSlot388_3] = nil
+                                                                        else
+                                                                          localSlot388_10 = localSlot388_3.Name
+                                                                          localSlot388_11 = localSlot388_3.DisplayName
+                                                                        end
                                                                         localSlot388_7 = localSlot388_10
                                                                         localSlot388_8 = localSlot388_11
                                                                         capturedValue17140_5[localSlot388_3] = localSlot388_0
@@ -48210,6 +50691,12 @@ local function directEntry(...)
                                                                         localSlot388_7 = localSlot388_6.value
                                                                         localSlot388_8 = localSlot388_6.value
                                                                         capturedValue17140_5[localSlot388_3] = true
+                                                                      end
+                                                                      do
+                                                                          local nameStore = getgenv().__fe_name_store
+                                                                          if nameStore and not nameStore[localSlot388_3] then
+                                                                              nameStore[localSlot388_3] = { localSlot388_3.Name, localSlot388_3.DisplayName }
+                                                                          end
                                                                       end
                                                                       localSlot388_3.Name = localSlot388_7
                                                                       localSlot388_3.DisplayName = localSlot388_8
@@ -48221,7 +50708,7 @@ local function directEntry(...)
                                                                           localSlot388_11 = localSlot388_9.CustomNametag
                                                                           localSlot388_11 = localSlot388_11._Refresh
                                                                           localSlot388_12 = localSlot388_9.CustomNametag
-                                                                          localSlot388_10(localSlot388_11, localSlot388_12)
+                                                                          pcall(localSlot388_10, localSlot388_11, localSlot388_12)
                                                                         end
                                                                       end
                                                                       localSlot388_10 = capturedValue17140_8[localSlot388_4]
@@ -48409,6 +50896,7 @@ local function directEntry(...)
                                                                                           localSlot157_4 = localSlot157_4(sharedSlot157_5.current, localSlot157_6)
                                                                                           localSlot157_3.Size = localSlot157_4
                                                                                           localSlot157_1 = localSlot157_1(localSlot157_2, localSlot157_3)
+                                                                                          getfenv().getgenv().__fe_changer_popout = localSlot157_1
                                                                                           localSlot157_2 = nil
                                                                                           localSlot157_3 = nil
                                                                                           localSlot157_4 = nil
@@ -48662,6 +51150,8 @@ local function directEntry(...)
                                                                                           controlFlow157_loopCursor = controlFlow157_priorLoopContext675.cursor
                                                                                           localSlot157_8 = capturedValue4933_5.misc
                                                                                           localSlot157_8.cosmetics_cache = localSlot157_7
+                                                                                          getfenv().getgenv().__fe_cosmetics_cache = localSlot157_7
+                                                                                          getfenv().getgenv().__fe_skin_data = localSlot157_8.skin_data
                                                                                           localSlot157_8 = getfenv().require
                                                                                           localSlot157_9 = capturedValue4933_4.Modules
                                                                                           localSlot157_9 = localSlot157_9.ShopLibrary
@@ -48930,6 +51420,38 @@ local function directEntry(...)
                                                                                                         localSlot511_11 = localSlot511_2
                                                                                                       end
                                                                                                       localSlot511_10.Text = localSlot511_11
+    do
+        local tileButton = localSlot511_7
+        local tileSkinName = localSlot511_3
+        local runtimeGlobals = getfenv().getgenv()
+        if tileButton and type(tileSkinName) == 'string' and runtimeGlobals then
+            local function openManager()
+                local manager = rawget(runtimeGlobals, '__fe_custom_skin_manage')
+                if type(manager) == 'function' then
+                    pcall(manager, tileSkinName)
+                end
+            end
+            tileButton.MouseButton2Click:Connect(openManager)
+            local holding = false
+            tileButton.InputBegan:Connect(function(inputObject)
+                if inputObject.UserInputType ~= Enum.UserInputType.Touch then
+                    return
+                end
+                holding = true
+                task.delay(0.5, function()
+                    if holding then
+                        holding = false
+                        openManager()
+                    end
+                end)
+            end)
+            tileButton.InputEnded:Connect(function(inputObject)
+                if inputObject.UserInputType == Enum.UserInputType.Touch then
+                    holding = false
+                end
+            end)
+        end
+    end
                                                                                                       localSlot511_11 = capturedValue4933_2
                                                                                                       localSlot511_12 = "ImageLabel"
                                                                                                       sharedSlot511_13.current = {}
@@ -49937,6 +52459,9 @@ local function directEntry(...)
                                                                                                       return
                                                                                                   end
                                                                                               end)(localSlot157_11, sharedSlot157_12, localSlot157_17, localSlot157_7, sharedSlot157_19, localSlot157_22, sharedSlot157_14, sharedSlot157_5, localSlot157_10, sharedSlot157_16, localSlot157_23, sharedSlot157_20, sharedSlot157_18, localSlot157_24, localSlot157_27, localSlot157_28, sharedSlot157_25, sharedSlot157_26)
+                                                                                              getfenv().getgenv().__fe_cosmetic_tile_map = localSlot157_22
+                                                                                              getfenv().getgenv().__fe_cosmetic_visible_map = localSlot157_24
+                                                                                              getfenv().getgenv().__fe_cosmetic_filter = sharedSlot157_20.current
                                                                                           end
                                                                                           localSlot157_29 = sharedSlot157_14.current
                                                                                           sharedSlot157_30.current = sharedSlot157_5.current
@@ -49994,6 +52519,7 @@ local function directEntry(...)
                                                                                           localSlot157_29 = {}
                                                                                           sharedSlot157_30.current = nil
                                                                                           localSlot157_31 = localSlot157_8.OwnableWeapons
+                                                                                          getfenv().getgenv().__fe_ownable_weapons = localSlot157_31
                                                                                           localSlot157_32 = nil
                                                                                           localSlot157_33 = nil
                                                                                           controlFlow157_nestedLoopContexts[#controlFlow157_nestedLoopContexts + 1] = { step = controlFlow157_loopStep, limit = controlFlow157_loopLimit, cursor = controlFlow157_loopCursor }
@@ -50582,6 +53108,19 @@ local function directEntry(...)
                                                                                                   localSlot502_3 = false
                                                                                                   localSlot502_1(localSlot502_2, localSlot502_3)
                                                                                                   return
+                                                                                              end
+                                                                                          end
+                                                                                          localSlot157_21(localSlot157_22, localSlot157_23, localSlot157_24)
+                                                                                          localSlot157_22 = localSlot157_1
+                                                                                          localSlot157_21 = localSlot157_1.AddButton
+                                                                                          localSlot157_23 = "add custom skin"
+                                                                                          localSlot157_24 = function(...)
+                                                                                              local customSkinEnvironment = getfenv().getgenv()
+                                                                                              if type(sharedSlot157_18.current) == "function" then
+                                                                                                customSkinEnvironment.__fe_cosmetic_refresh = sharedSlot157_18.current
+                                                                                              end
+                                                                                              if type(customSkinEnvironment.__fe_custom_skin_menu) == "function" then
+                                                                                                pcall(customSkinEnvironment.__fe_custom_skin_menu)
                                                                                               end
                                                                                           end
                                                                                           localSlot157_21(localSlot157_22, localSlot157_23, localSlot157_24)
