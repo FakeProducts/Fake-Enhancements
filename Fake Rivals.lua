@@ -25044,7 +25044,6 @@ local function directEntry(...)
                         local radius = 4.5
                         local target = root.Position + Vector3.new(math.cos(itemState.orbit) * radius, 0, math.sin(itemState.orbit) * radius)
                         translation = translation + (target - center)
-                        yaw = yaw - itemState.orbit
                     end
                 end
 
