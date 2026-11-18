@@ -26262,6 +26262,26 @@ local function directEntry(...)
         sharedSlot1_96.current.Default = false
         sharedSlot1_93.current = sharedSlot1_93.current(sharedSlot1_94.current, sharedSlot1_95.current, sharedSlot1_96.current)
         getgenv().__fe_auto_load_toggle = sharedSlot1_93.current
+        getgenv().__fe_queue_loader = function()
+            if type(queue_on_teleport) ~= 'function' then
+                return
+            end
+            if game.PlaceId ~= 17625359962 then
+                return
+            end
+            pcall(queue_on_teleport, [==[
+if game.PlaceId ~= 17625359962 then return end
+if type(isfile) == "function" and not isfile("LOAD_PERSISTENT") then return end
+local Players = game:GetService("Players")
+if not game:IsLoaded() then repeat task.wait(0.25) until game:IsLoaded() end
+repeat task.wait(0.25) until Players.LocalPlayer and Players.LocalPlayer:FindFirstChild("PlayerScripts")
+task.wait(0.5)
+local okFetch, source = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua")
+if not okFetch or type(source) ~= "string" then return end
+local chunk = (loadstring or load)(source)
+if chunk then pcall(chunk) end
+]==])
+        end
         getgenv().__fe_auto_load_install = function(value)
             pcall(function()
                 if type(writefile) ~= 'function' then
@@ -26272,6 +26292,9 @@ local function directEntry(...)
                         and isfile('autoexec/fake_enhancements.lua') then
                         pcall(delfile, 'autoexec/fake_enhancements.lua')
                     end
+                    if type(clear_teleport_queue) == 'function' then
+                        pcall(clear_teleport_queue)
+                    end
                     return
                 end
                 if type(makefolder) == 'function' then
@@ -26281,6 +26304,10 @@ local function directEntry(...)
                     'autoexec/fake_enhancements.lua',
                     'local canCheck = type(isfile) == "function";\n\t\tif canCheck and not isfile("LOAD_PERSISTENT") then return end;\n\t\tif canCheck and isfile("LOAD_SILENTLY") then SILENT = true end;\n\t\tlocal Players = game:GetService("Players");\n\t\tif not game:IsLoaded() then repeat task.wait(0.25) until game:IsLoaded() end;\n\t\trepeat task.wait(0.25) until Players.LocalPlayer;\n\t\trepeat task.wait(0.25) until Players.LocalPlayer:FindFirstChild("PlayerScripts");\n\t\ttask.wait(0.5);\n\t\tlocal okFetch, source = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua");\n\t\tif not okFetch or type(source) ~= "string" then return end;\n\t\tlocal chunk = (loadstring or load)(source);\n\t\tif chunk then pcall(chunk) end;\n\t\t'
                 )
+
+                if getgenv().__fe_queue_loader then
+                    pcall(getgenv().__fe_queue_loader)
+                end
             end)
         end
         getgenv().__fe_auto_load_toggle:OnChanged(function(value)
