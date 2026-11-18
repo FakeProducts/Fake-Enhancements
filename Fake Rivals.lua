@@ -2559,6 +2559,48 @@ end
 local runtimeHookTargets = {}
 runtimeEnvironment.__UEDEOBF_HOOK_TARGETS = runtimeHookTargets
 
+-- Popouts size themselves in offsets, so tall ones (cosmetic changer) run off
+-- small screens.  Fit them with a UIScale instead of rewriting their layout.
+runtimeEnvironment.__fe_fit_popout = function(popout)
+    local holder = popout and popout.Holder
+    if not holder or not holder.Parent then
+        return
+    end
+    local camera = workspace.CurrentCamera
+    local viewport = camera and camera.ViewportSize or Vector2.new(1280, 720)
+    local scale = holder:FindFirstChild('fe_popout_fit')
+    if not scale then
+        local ok, created = pcall(Instance.new, 'UIScale')
+        if not ok or not created then
+            return
+        end
+        created.Name = 'fe_popout_fit'
+        created.Parent = holder
+        scale = created
+    end
+    local sizeX = holder.Size.X.Offset
+    if sizeX <= 0 then
+        sizeX = holder.AbsoluteSize.X
+    end
+    local sizeY = holder.Size.Y.Offset
+    if sizeY <= 0 then
+        sizeY = holder.AbsoluteSize.Y
+    end
+    local fitX = (viewport.X - 30) / math.max(1, sizeX)
+    local fitY = (viewport.Y - 120) / math.max(1, sizeY)
+    scale.Scale = math.min(1, fitX, fitY)
+end
+
+runtimeEnvironment.__fe_fit_popout_soon = function(popout)
+    local fit = rawget(runtimeEnvironment, '__fe_fit_popout')
+    getfenv().task.spawn(function()
+        for _ = 1, 20 do
+            pcall(fit, popout)
+            getfenv().task.wait(0.2)
+        end
+    end)
+end
+
 local function prepareRuntimeHookTarget(targetFunction)
     if type(targetFunction) ~= 'function' or runtimeHookTargets[targetFunction] then
         return targetFunction
@@ -3762,6 +3804,7 @@ runtimeEnvironment.__fe_custom_skin_manage = function(skinName)
         ZIndex = 30,
     })
     runtimeEnvironment.__fe_manage_popout = popout
+    pcall(function() getgenv().__fe_fit_popout_soon(popout) end)
     pcall(function()
         popout.Holder.Parent.DisplayOrder = 60
     end)
@@ -19318,6 +19361,25 @@ local function directEntry(...)
         sharedSlot1_91.current = sharedSlot1_91.current(sharedSlot1_92.current, sharedSlot1_93.current)
         sharedSlot1_90.current.settings = sharedSlot1_91.current
         do
+            local sessionGroup = sharedSlot1_90.current.settings:AddRightGroupbox("session")
+            sessionGroup:AddButton("Unload", function()
+                local environment = getgenv()
+                local mobilePad = environment.__fe_fly_pad
+                if type(mobilePad) == "table" and mobilePad.gui then
+                    pcall(function()
+                        mobilePad.gui:Destroy()
+                    end)
+                end
+                environment.__fe_fly_pad = nil
+                local teardown = environment.__UEDEOBF_TEARDOWN
+                if type(teardown) == "function" then
+                    pcall(teardown)
+                end
+                environment.__UEDEOBF_TEARDOWN = nil
+                environment.__UEDEOBF_GENERATION = nil
+            end)
+        end
+        do
             sharedSlot1_91.current = function(localSlot59_1, localSlot59_2, localSlot59_3)
                 local localSlot59_4, localSlot59_5, localSlot59_6, localSlot59_7, localSlot59_8, localSlot59_9, localSlot59_10
                 localSlot59_5 = localSlot59_1
@@ -24625,6 +24687,411 @@ local function directEntry(...)
         sharedSlot1_97.current.Values = sharedSlot1_98.current
         sharedSlot1_97.current.Default = 1
         sharedSlot1_94.current(sharedSlot1_95.current, sharedSlot1_96.current, sharedSlot1_97.current)
+
+        do
+            local itemTab = sharedSlot1_93.current
+            itemTab:AddToggle("item_anim_enabled", {
+                Text = "item animations",
+                Default = false,
+                Tooltip = "animates the weapon in your hands, arms stay put",
+            })
+            itemTab:AddDropdown("item_anim_list", {
+                Text = "animations",
+                Values = { "spin clockwise", "spin counter-clockwise", "up and down", "orbit around body" },
+                Default = {},
+                AllowNull = true,
+                Multi = true,
+            })
+            itemTab:AddSlider("item_spin_speed", {
+                Text = "spin speed",
+                Default = 6,
+                Min = 1,
+                Max = 40,
+                Rounding = 0,
+                Compact = true,
+            })
+            itemTab:AddSlider("item_bob_speed", {
+                Text = "up&down speed",
+                Default = 6,
+                Min = 1,
+                Max = 40,
+                Rounding = 0,
+                Compact = true,
+            })
+            itemTab:AddSlider("item_orbit_speed", {
+                Text = "orbit speed",
+                Default = 6,
+                Min = 1,
+                Max = 40,
+                Rounding = 0,
+                Compact = true,
+            })
+            itemTab:AddToggle("item_effects_enabled", {
+                Text = "effects",
+                Default = false,
+                Tooltip = "adds visual effects to the weapon in your hands",
+            })
+            itemTab:AddDropdown("item_effects_list", {
+                Text = "effect",
+                Values = { "trail" },
+                Default = {},
+                AllowNull = true,
+                Multi = true,
+            })
+            local trailRow = itemTab:AddLabel("trail")
+            trailRow:AddColorPicker("item_trail_color1", {
+                Default = Color3.new(0.75, 0.45, 1),
+                Transparency = 0,
+            })
+            trailRow:AddColorPicker("item_trail_color2", {
+                Default = Color3.new(1, 1, 1),
+                Transparency = 0,
+            })
+            itemTab:AddSlider("item_trail_width", {
+                Text = "trail width",
+                Default = 100,
+                Min = 10,
+                Max = 400,
+                Suffix = "%",
+                Rounding = 0,
+                Compact = true,
+            })
+        end
+        do
+            local itemRunService = game:GetService("RunService")
+            local itemPlayers = game:GetService("Players")
+            local itemLocalPlayer = itemPlayers.LocalPlayer
+            local itemState = {
+                weapon = nil,
+                angle = 0,
+                bob = 0,
+                orbit = 0,
+                trailPartA = nil,
+                trailPartB = nil,
+                trail = nil,
+                attachmentA = nil,
+                attachmentB = nil,
+            }
+
+            local function itemToggle(id)
+                local store = getfenv().Toggles
+                local element = store and store[id]
+                return element and element.Value == true or false
+            end
+            local function itemValue(id)
+                local store = getfenv().Options
+                local element = store and store[id]
+                return element and element.Value or nil
+            end
+            local function itemSelection(id)
+                local value = itemValue(id)
+                if type(value) ~= "table" then
+                    return {}
+                end
+                return value
+            end
+            local function itemNumber(id, fallback)
+                local value = tonumber(itemValue(id))
+                if not value or value <= 0 then
+                    return fallback
+                end
+                return value
+            end
+            local itemTypeOf = getfenv().typeof or type
+            local function itemColor(id, fallback)
+                local value = itemValue(id)
+                if itemTypeOf(value) == "Color3" then
+                    return value
+                end
+                return fallback
+            end
+
+            local function itemWeapon()
+                local folder = workspace:FindFirstChild("ViewModels")
+                local firstPerson = folder and folder:FindFirstChild("FirstPerson")
+                if not firstPerson then
+                    return nil
+                end
+                for _, child in ipairs(firstPerson:GetChildren()) do
+                    if child:IsA("Model") then
+                        return child
+                    end
+                end
+                return nil
+            end
+            local function itemGunParts(weapon)
+                local parts = {}
+                for _, descendant in ipairs(weapon:GetDescendants()) do
+                    if descendant:IsA("BasePart") then
+                        local lowerName = descendant.Name:lower()
+                        if lowerName:find("arm") == nil
+                            and lowerName:find("rootpart") == nil
+                            and lowerName ~= "camera"
+                            and descendant.Name ~= "HumanoidRootPart"
+                            and descendant.Name ~= "Camera" then
+                            parts[#parts + 1] = descendant
+                        end
+                    end
+                end
+                table.sort(parts, function(a, b)
+                    return a.Name < b.Name
+                end)
+                return parts
+            end
+            local function itemBounds(parts)
+                local minimum = Vector3.new(math.huge, math.huge, math.huge)
+                local maximum = Vector3.new(-math.huge, -math.huge, -math.huge)
+                for _, part in ipairs(parts) do
+                    local position = part.Position
+                    local half = part.Size * 0.5
+                    minimum = Vector3.new(
+                        math.min(minimum.X, position.X - half.X),
+                        math.min(minimum.Y, position.Y - half.Y),
+                        math.min(minimum.Z, position.Z - half.Z)
+                    )
+                    maximum = Vector3.new(
+                        math.max(maximum.X, position.X + half.X),
+                        math.max(maximum.Y, position.Y + half.Y),
+                        math.max(maximum.Z, position.Z + half.Z)
+                    )
+                end
+                return minimum, maximum
+            end
+            local function itemMakeTrail()
+                local holderA = Instance.new("Part")
+                holderA.Name = "fe_trail_a"
+                holderA.Anchored = true
+                holderA.CanCollide = false
+                holderA.CanQuery = false
+                holderA.CanTouch = false
+                holderA.CastShadow = false
+                holderA.Transparency = 1
+                holderA.Size = Vector3.new(0.1, 0.1, 0.1)
+                holderA.Parent = workspace.CurrentCamera
+                local holderB = holderA:Clone()
+                holderB.Name = "fe_trail_b"
+                holderB.Parent = workspace.CurrentCamera
+                local attachmentA = Instance.new("Attachment")
+                attachmentA.Parent = holderA
+                local attachmentB = Instance.new("Attachment")
+                attachmentB.Parent = holderB
+                local trail = Instance.new("Trail")
+                trail.Attachment0 = attachmentA
+                trail.Attachment1 = attachmentB
+                trail.Lifetime = 0.45
+                trail.MinLength = 0
+                trail.WidthScale = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 0) })
+                trail.Parent = holderA
+                return holderA, holderB, attachmentA, attachmentB, trail
+            end
+            local function itemGhost(weapon)
+                local storage = getgenv()
+                local cached = storage.__fe_item_ghost
+                if cached and cached.name == weapon.Name and cached.parts[1] and cached.parts[1].Parent then
+                    return cached
+                end
+                if cached then
+                    for _, piece in ipairs(cached.parts) do
+                        pcall(function()
+                            piece:Destroy()
+                        end)
+                    end
+                    storage.__fe_item_ghost = nil
+                end
+                local root = weapon:FindFirstChild("HumanoidRootPart")
+                if not root then
+                    return nil
+                end
+                local container = Instance.new("Model")
+                container.Name = "fe_item_ghost"
+                for _, child in ipairs(weapon:GetChildren()) do
+                    if child:IsA("Model") and child.Name:lower():find("arm") == nil then
+                        local copy = child:Clone()
+                        local doomed = {}
+                        for _, node in ipairs(copy:GetDescendants()) do
+                            if not node:IsA("BasePart") then
+                                doomed[#doomed + 1] = node
+                            end
+                        end
+                        for _, node in ipairs(doomed) do
+                            node:Destroy()
+                        end
+                        copy.Parent = container
+                    end
+                end
+                local parts, offsets = {}, {}
+                local base = root.CFrame
+                for _, node in ipairs(container:GetDescendants()) do
+                    if node:IsA("BasePart") then
+                        node.Anchored = true
+                        node.CanCollide = false
+                        node.CanQuery = false
+                        node.CanTouch = false
+                        node.CastShadow = false
+                        node.Massless = true
+                        offsets[#offsets + 1] = base:ToObjectSpace(node.CFrame)
+                        parts[#parts + 1] = node
+                    end
+                end
+                if #parts == 0 then
+                    container:Destroy()
+                    return nil
+                end
+                container.Parent = nil
+                local bundle = { name = weapon.Name, parts = parts, offsets = offsets, container = container }
+                storage.__fe_item_ghost = bundle
+                return bundle
+            end
+            local function itemCleanup()
+                for _, key in ipairs({ "trailPartA", "trailPartB" }) do
+                    local piece = itemState[key]
+                    if piece then
+                        pcall(function()
+                            piece:Destroy()
+                        end)
+                        itemState[key] = nil
+                    end
+                end
+                itemState.trail = nil
+                itemState.attachmentA = nil
+                itemState.attachmentB = nil
+                itemState.weapon = nil
+            end
+
+            itemRunService:BindToRenderStep("fe_item_animations", 2001, function(delta)
+                local weapon = itemWeapon()
+                if weapon then
+                    itemGhost(weapon)
+                end
+                if itemState.weapon ~= weapon then
+                    itemCleanup()
+                    itemState.weapon = weapon
+                end
+
+                local active = itemToggle("item_anim_enabled") or itemToggle("item_effects_enabled")
+                local bundle = getgenv().__fe_item_ghost
+                local parts = weapon and itemGunParts(weapon) or {}
+                local hasGun = #parts > 0
+                local ghosted = false
+                if not hasGun and active and bundle and #bundle.parts > 0 then
+                    local character = itemLocalPlayer.Character
+                    local hand = character and (character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm"))
+                    if hand then
+                        local grip = hand.CFrame * CFrame.new(0, -0.15, -0.35)
+                        parts = bundle.parts
+                        ghosted = true
+                        bundle.container.Parent = workspace.CurrentCamera
+                        for index, piece in ipairs(parts) do
+                            piece.CFrame = grip * bundle.offsets[index]
+                        end
+                    end
+                end
+                if bundle and bundle.container.Parent and not ghosted and not hasGun then
+                    bundle.container.Parent = nil
+                end
+                if bundle and hasGun and bundle.container.Parent then
+                    bundle.container.Parent = nil
+                end
+                local snapshots = {}
+                local center
+                local halfHeight, halfDepth, width
+                local forward
+
+                if hasGun then
+                    local sum = Vector3.zero
+                    for index, part in ipairs(parts) do
+                        if part.LocalTransparencyModifier ~= 0 then
+                            part.LocalTransparencyModifier = 0
+                        end
+                        snapshots[index] = part.CFrame
+                        sum = sum + part.Position
+                    end
+                    center = sum / #parts
+                    local minimum, maximum = itemBounds(parts)
+                    halfHeight = (maximum.Y - minimum.Y) * 0.5
+                    halfDepth = (maximum.Z - minimum.Z) * 0.5
+                    width = math.max(maximum.X - minimum.X, maximum.Y - minimum.Y)
+                    forward = snapshots[#snapshots].LookVector
+                elseif not ghosted then
+                    local character = itemLocalPlayer.Character
+                    local hand = character and (character:FindFirstChild("RightHand") or character:FindFirstChild("Right Arm"))
+                    if not hand then
+                        return
+                    end
+                    center = hand.Position
+                    halfHeight, halfDepth, width = 0.5, 0.5, 1.5
+                    forward = hand.CFrame.LookVector
+                end
+
+                local animations = itemToggle("item_anim_enabled") and itemSelection("item_anim_list") or {}
+                local yaw = 0
+                local translation = Vector3.zero
+
+                if animations["spin clockwise"] or animations["spin counter-clockwise"] then
+                    local direction = animations["spin counter-clockwise"] and -1 or 1
+                    itemState.angle = itemState.angle + delta * itemNumber("item_spin_speed", 6) * direction
+                    yaw = yaw + itemState.angle
+                end
+                if animations["up and down"] then
+                    itemState.bob = itemState.bob + delta * itemNumber("item_bob_speed", 6)
+                    translation = translation + Vector3.new(0, math.sin(itemState.bob) * (halfHeight + 0.3), 0)
+                end
+                if animations["orbit around body"] then
+                    local character = itemLocalPlayer.Character
+                    local root = character and character:FindFirstChild("HumanoidRootPart")
+                    if root then
+                        itemState.orbit = itemState.orbit + delta * itemNumber("item_orbit_speed", 6) * 0.6
+                        local radius = 4.5
+                        local target = root.Position + Vector3.new(math.cos(itemState.orbit) * radius, 0, math.sin(itemState.orbit) * radius)
+                        translation = translation + (target - center)
+                        yaw = yaw - itemState.orbit
+                    end
+                end
+
+                local rotation = math.abs(yaw) > 0.0001 and CFrame.Angles(0, yaw, 0) or CFrame.new()
+                local pivot = CFrame.new(center) * rotation * CFrame.new(-center)
+                if translation ~= Vector3.zero then
+                    pivot = CFrame.new(translation) * pivot
+                end
+                if hasGun then
+                    for index, part in ipairs(parts) do
+                        part.CFrame = pivot * snapshots[index]
+                    end
+                end
+
+                local movedCenter = hasGun and (pivot * center) or (center + translation)
+                local effects = itemToggle("item_effects_enabled") and itemSelection("item_effects_list") or {}
+
+                if effects.trail then
+                    if not itemState.trail then
+                        local holderA, holderB, attachmentA, attachmentB, trail = itemMakeTrail()
+                        itemState.trailPartA = holderA
+                        itemState.trailPartB = holderB
+                        itemState.attachmentA = attachmentA
+                        itemState.attachmentB = attachmentB
+                        itemState.trail = trail
+                    end
+                    itemState.trailPartA.CFrame = CFrame.new(movedCenter + forward * (halfDepth + 0.2))
+                    itemState.trailPartB.CFrame = CFrame.new(movedCenter - forward * (halfDepth + 0.2))
+                    itemState.trail.Color = ColorSequence.new(itemColor("item_trail_color1", Color3.new(0.75, 0.45, 1)), itemColor("item_trail_color2", Color3.new(1, 1, 1)))
+                    itemState.trail.WidthScale = NumberSequence.new({
+                        NumberSequenceKeypoint.new(0, itemNumber("item_trail_width", 100) / 100),
+                        NumberSequenceKeypoint.new(1, 0),
+                    })
+                elseif itemState.trail then
+                    for _, key in ipairs({ "trailPartA", "trailPartB" }) do
+                        local piece = itemState[key]
+                        if piece then
+                            piece:Destroy()
+                        end
+                        itemState[key] = nil
+                    end
+                    itemState.trail = nil
+                end
+            end)
+
+            trackRuntimeConnection(itemLocalPlayer.CharacterRemoving:Connect(itemCleanup))
+        end
         sharedSlot1_92.current = sharedSlot1_90.current.visuals
         sharedSlot1_93.current = sharedSlot1_92.current
         sharedSlot1_92.current = sharedSlot1_92.current.AddLeftTabbox
@@ -25813,7 +26280,7 @@ local function directEntry(...)
                 end
                 writefile(
                     'autoexec/fake_enhancements.lua',
-                    'local canCheck = type(isfile) == "function";\n\t\tif canCheck and not isfile("LOAD_PERSISTENT") then return end;\n\t\tif canCheck and isfile("LOAD_SILENTLY") then SILENT = true end;\n\t\tlocal okFetch, source = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua");\n\t\tif not okFetch then return end;\n\t\tlocal chunk = (loadstring or load)(source);\n\t\tif chunk then chunk() end;\n\t\t'
+                    'local canCheck = type(isfile) == "function";\n\t\tif canCheck and not isfile("LOAD_PERSISTENT") then return end;\n\t\tif canCheck and isfile("LOAD_SILENTLY") then SILENT = true end;\n\t\tlocal Players = game:GetService("Players");\n\t\tif not game:IsLoaded() then repeat task.wait(0.25) until game:IsLoaded() end;\n\t\trepeat task.wait(0.25) until Players.LocalPlayer;\n\t\trepeat task.wait(0.25) until Players.LocalPlayer:FindFirstChild("PlayerScripts");\n\t\ttask.wait(0.5);\n\t\tlocal okFetch, source = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua");\n\t\tif not okFetch or type(source) ~= "string" then return end;\n\t\tlocal chunk = (loadstring or load)(source);\n\t\tif chunk then pcall(chunk) end;\n\t\t'
                 )
             end)
         end
@@ -26574,80 +27041,136 @@ local function directEntry(...)
                     end
                 end
             end)
-            local function spoofApplyAvatar(userId)
-                local character = spoofPlayer.Character
-                if not character then
-                    return
+            local spoofAvatarDefaultId = 261
+            local spoofAvatarOwnMesh
+            local spoofAvatarSpool = { description = {}, model = {} }
+
+            local function spoofAvatarUserId()
+                local typed = tonumber(spoofValue("spoof_avatar_userid"))
+                if typed and typed > 0 then
+                    return math.floor(typed)
                 end
-                local humanoid = character:FindFirstChildOfClass("Humanoid")
-                if not humanoid then
-                    return
+                return spoofAvatarDefaultId
+            end
+
+            local function spoofAvatarDropCache(key)
+                local model = spoofAvatarSpool.model[key]
+                if model then
+                    pcall(function()
+                        model:Destroy()
+                    end)
+                    spoofAvatarSpool.model[key] = nil
                 end
-                local description = spoofPlayers:GetHumanoidDescriptionFromUserIdAsync(userId)
-                local model = spoofPlayers:CreateHumanoidModelFromDescriptionAsync(description, humanoid.RigType)
-                local newPants = model:FindFirstChild("Pants")
-                local pants = character:FindFirstChild("Pants")
-                if newPants then
-                    if not pants then
-                        pants = Instance.new("Pants")
-                        pants.Name = "Pants"
-                        pants.Parent = character
+                spoofAvatarSpool.description[key] = nil
+            end
+
+            local function spoofAvatarPrune(keepA, keepB)
+                local keys = {}
+                for key in pairs(spoofAvatarSpool.description) do
+                    keys[#keys + 1] = key
+                end
+                for _, key in ipairs(keys) do
+                    if key ~= keepA and key ~= keepB then
+                        spoofAvatarDropCache(key)
                     end
-                    pants.PantsTemplate = newPants.PantsTemplate
-                elseif pants then
-                    pants:Destroy()
                 end
-                local newShirt = model:FindFirstChild("Shirt")
-                local shirt = character:FindFirstChild("Shirt")
-                if newShirt then
-                    if not shirt then
-                        shirt = Instance.new("Shirt")
-                        shirt.Name = "Shirt"
-                        shirt.Parent = character
-                    end
-                    shirt.ShirtTemplate = newShirt.ShirtTemplate
-                elseif shirt then
-                    shirt:Destroy()
+            end
+
+            local function spoofAvatarDescriptionFor(userId)
+                local key = tostring(userId)
+                local cached = spoofAvatarSpool.description[key]
+                if cached then
+                    return cached
                 end
-                local newGraphic = model:FindFirstChildWhichIsA("ShirtGraphic")
-                local graphic = character:FindFirstChildWhichIsA("ShirtGraphic")
-                if newGraphic then
-                    if not graphic then
-                        graphic = Instance.new("ShirtGraphic")
-                        graphic.Name = "Shirt Graphic"
-                        graphic.Parent = character
+                local ok, description = pcall(spoofPlayers.GetHumanoidDescriptionFromUserIdAsync, spoofPlayers, userId)
+                if not ok or not description then
+                    return nil
+                end
+                spoofAvatarSpool.description[key] = description
+                return description
+            end
+
+            local function spoofAvatarModelFor(userId, rigType)
+                local key = tostring(userId)
+                local cached = spoofAvatarSpool.model[key]
+                if cached then
+                    return cached
+                end
+                local description = spoofAvatarDescriptionFor(userId)
+                if not description then
+                    return nil
+                end
+                local ok, model = pcall(spoofPlayers.CreateHumanoidModelFromDescriptionAsync, spoofPlayers, description, rigType)
+                if not ok or not model then
+                    return nil
+                end
+                spoofAvatarSpool.model[key] = model
+                return model
+            end
+
+            local function spoofAvatarCopy(model, character, humanoid)
+                if not (model and character and humanoid) then
+                    return false
+                end
+                local modelHumanoid = model:FindFirstChildOfClass("Humanoid")
+                if modelHumanoid then
+                    for _, value in ipairs(modelHumanoid:GetChildren()) do
+                        if value:IsA("NumberValue") then
+                            local target = humanoid:FindFirstChild(value.Name)
+                            if target and target:IsA("NumberValue") then
+                                target.Value = value.Value
+                            end
+                        end
                     end
-                    graphic.Graphic = newGraphic.Graphic
-                elseif graphic then
-                    graphic:Destroy()
                 end
                 local newColors = model:FindFirstChildWhichIsA("BodyColors")
-                local bodyColors = character:FindFirstChild("Body Colors") or character:FindFirstChildWhichIsA("BodyColors")
-                if newColors then
-                    if not bodyColors then
-                        bodyColors = Instance.new("BodyColors")
-                        bodyColors.Name = "Body Colors"
-                        bodyColors.Parent = character
+                local bodyColors = character:FindFirstChildWhichIsA("BodyColors")
+                if newColors and bodyColors then
+                    for _, key in ipairs({ "HeadColor3", "LeftArmColor3", "RightArmColor3", "LeftLegColor3", "RightLegColor3", "TorsoColor3" }) do
+                        pcall(function()
+                            bodyColors[key] = newColors[key]
+                        end)
                     end
-                    for _, part in ipairs({ "Head", "RightLeg", "LeftLeg", "RightArm", "LeftArm", "Torso" }) do
-                        bodyColors[part .. "Color3"] = newColors[part .. "Color3"]
+                end
+                for _, className in ipairs({ "Shirt", "Pants", "ShirtGraphic" }) do
+                    local source = model:FindFirstChildWhichIsA(className)
+                    local target = character:FindFirstChildWhichIsA(className)
+                    if source then
+                        if not target then
+                            local ok, created = pcall(Instance.new, className)
+                            if ok and created then
+                                created.Name = className
+                                created.Parent = character
+                                target = created
+                            end
+                        end
+                        if target then
+                            if className == "Shirt" then
+                                target.ShirtTemplate = source.ShirtTemplate
+                            elseif className == "Pants" then
+                                target.PantsTemplate = source.PantsTemplate
+                            else
+                                target.Graphic = source.Graphic
+                            end
+                        end
+                    elseif target then
+                        target:Destroy()
                     end
-                elseif bodyColors then
-                    bodyColors:Destroy()
                 end
                 for _, child in ipairs(character:GetChildren()) do
-                    if child:IsA("Accessory") then
+                    if child:IsA("Accessory") or child:IsA("Accoutrement") then
                         child:Destroy()
                     end
                 end
                 for _, child in ipairs(model:GetChildren()) do
-                    if child:IsA("Accessory") then
+                    if child:IsA("Accessory") or child:IsA("Accoutrement") then
                         local clone = child:Clone()
                         for _, descendant in ipairs(clone:GetDescendants()) do
                             if descendant:IsA("Weld") then
                                 if descendant.Part0 and character:FindFirstChild(descendant.Part0.Name) then
                                     descendant.Part0 = character[descendant.Part0.Name]
-                                elseif descendant.Part1 and character:FindFirstChild(descendant.Part1.Name) then
+                                end
+                                if descendant.Part1 and descendant.Part1.Parent ~= clone and character:FindFirstChild(descendant.Part1.Name) then
                                     descendant.Part1 = character[descendant.Part1.Name]
                                 end
                             end
@@ -26657,39 +27180,377 @@ local function directEntry(...)
                 end
                 local newHead = model:FindFirstChild("Head")
                 local head = character:FindFirstChild("Head")
-                if newHead and head then
-                    if newHead:IsA("MeshPart") and head:IsA("MeshPart") then
-                        pcall(head.ApplyMesh, head, newHead)
-                    elseif newHead:IsA("Part") and head:IsA("Part") then
-                        local newMesh = newHead:FindFirstChildWhichIsA("SpecialMesh")
-                        local mesh = head:FindFirstChildWhichIsA("SpecialMesh")
-                        if newMesh and mesh then
-                            mesh.MeshId = newMesh.MeshId
-                            mesh.TextureId = newMesh.TextureId
+                if newHead and head and newHead:IsA("MeshPart") and head:IsA("MeshPart") then
+                    pcall(head.ApplyMesh, head, newHead)
+                end
+                return true
+            end
+
+            local function spoofAvatarApplyModel(userId)
+                local character = spoofPlayer.Character
+                if not character then
+                    return false
+                end
+                local humanoid = character:FindFirstChildOfClass("Humanoid")
+                if not humanoid then
+                    return false
+                end
+                local model = spoofAvatarModelFor(userId, humanoid.RigType)
+                if not model then
+                    return false
+                end
+                return spoofAvatarCopy(model, character, humanoid)
+            end
+
+            local function spoofAvatarExpected()
+                local character = spoofPlayer.Character
+                if not character then
+                    return nil
+                end
+                local model = spoofAvatarSpool.model[tostring(spoofAvatarUserId())]
+                if not model then
+                    return nil
+                end
+                local modelHead = model:FindFirstChild("Head")
+                local modelShirt = model:FindFirstChildWhichIsA("Shirt")
+                local modelPants = model:FindFirstChildWhichIsA("Pants")
+                local accessories = 0
+                for _, child in ipairs(model:GetChildren()) do
+                    if child:IsA("Accessory") or child:IsA("Accoutrement") then
+                        accessories = accessories + 1
+                    end
+                end
+                return {
+                    mesh = modelHead and modelHead.MeshId or "",
+                    shirt = modelShirt and modelShirt.ShirtTemplate or "",
+                    pants = modelPants and modelPants.PantsTemplate or "",
+                    accessories = accessories,
+                }
+            end
+
+            local function spoofAvatarMatches()
+                local character = spoofPlayer.Character
+                if not character then
+                    return false
+                end
+                local expected = spoofAvatarExpected()
+                if not expected then
+                    return false
+                end
+                local head = character:FindFirstChild("Head")
+                local currentMesh = head and head:IsA("MeshPart") and head.MeshId or ""
+                if expected.mesh ~= "" and currentMesh ~= expected.mesh then
+                    return false
+                end
+                local shirt = character:FindFirstChildWhichIsA("Shirt")
+                local currentShirt = shirt and shirt.ShirtTemplate or ""
+                if currentShirt ~= expected.shirt then
+                    return false
+                end
+                local pants = character:FindFirstChildWhichIsA("Pants")
+                local currentPants = pants and pants.PantsTemplate or ""
+                if currentPants ~= expected.pants then
+                    return false
+                end
+                local accessories = 0
+                for _, child in ipairs(character:GetChildren()) do
+                    if child:IsA("Accessory") or child:IsA("Accoutrement") then
+                        accessories = accessories + 1
+                    end
+                end
+                return accessories == expected.accessories
+            end
+
+            local spoofAvatarImageLastId = getgenv().__fe_avatar_last_id
+            local spoofContentProvider = game:GetService("ContentProvider")
+            getgenv().__fe_avatar_build = "v7"
+            local function spoofAvatarSwapImage(lbl)
+                if not spoofToggle("spoof_avatar") then
+                    return
+                end
+                local spoofId = tostring(spoofAvatarUserId())
+                local ownId = tostring(spoofPlayer.UserId)
+                if spoofId == ownId or not lbl.Parent then
+                    return
+                end
+                local img = lbl.Image
+                if type(img) ~= "string" or img == "" then
+                    return
+                end
+                local swapped = img
+                for _, oldId in ipairs({ ownId, spoofAvatarImageLastId or "" }) do
+                    if oldId ~= "" and swapped:find(oldId, 1, true) then
+                        swapped = swapped:gsub(oldId, spoofId)
+                    end
+                end
+                if swapped == img then
+                    return
+                end
+                local alpha = lbl:GetAttribute("fe_alpha")
+                if alpha == nil then
+                    alpha = lbl.ImageTransparency
+                    lbl:SetAttribute("fe_alpha", alpha)
+                end
+                lbl.ImageTransparency = 1
+                lbl.Image = swapped
+                spoofTask.spawn(function()
+                    pcall(function()
+                        spoofContentProvider:PreloadAsync({ lbl })
+                    end)
+                    if lbl.Parent then
+                        lbl.ImageTransparency = alpha
+                    end
+                end)
+            end
+
+            local function spoofAvatarHookImage(object)
+                if not (object:IsA("ImageLabel") or object:IsA("ImageButton")) then
+                    return
+                end
+                if object:GetAttribute("fe_avatar_watched") then
+                    return
+                end
+                object:SetAttribute("fe_avatar_watched", true)
+                object:GetPropertyChangedSignal("Image"):Connect(function()
+                    spoofAvatarSwapImage(object)
+                end)
+                spoofAvatarSwapImage(object)
+            end
+
+            do
+                local playerGui = spoofPlayer:FindFirstChild("PlayerGui")
+                if playerGui then
+                    playerGui:SetAttribute("fe_avatar_img_hook", "v7")
+                    for _, d in ipairs(playerGui:GetDescendants()) do
+                        spoofAvatarHookImage(d)
+                    end
+                    playerGui.DescendantAdded:Connect(function(d)
+                        spoofAvatarHookImage(d)
+                        for _, child in ipairs(d:GetDescendants()) do
+                            spoofAvatarHookImage(child)
+                        end
+                    end)
+                end
+            end
+
+            local function spoofAvatarRewriteImages(newId, oldIds)
+                local playerGui = spoofPlayer:FindFirstChild("PlayerGui")
+                if not playerGui then
+                    return
+                end
+                pcall(function()
+                    for _, descendant in ipairs(playerGui:GetDescendants()) do
+                        local isImage = descendant:IsA("ImageLabel") or descendant:IsA("ImageButton")
+                        local isDecal = descendant:IsA("Decal")
+                        if isImage or isDecal then
+                            local source = isImage and descendant.Image or descendant.Texture
+                            if type(source) == "string" and source ~= "" then
+                                local swapped = source
+                                for _, oldId in ipairs(oldIds) do
+                                    if oldId ~= "" and swapped:find(oldId, 1, true) then
+                                        swapped = swapped:gsub(oldId, newId)
+                                    end
+                                end
+                                if swapped ~= source then
+                                    if isImage then
+                                        descendant.Image = swapped
+                                    else
+                                        descendant.Texture = swapped
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end)
+            end
+
+            local function spoofAvatarImages()
+                local ownId = tostring(spoofPlayer.UserId)
+                if not spoofToggle("spoof_avatar") then
+                    if spoofAvatarImageLastId and spoofAvatarImageLastId ~= ownId then
+                        spoofAvatarRewriteImages(ownId, { spoofAvatarImageLastId })
+                        spoofAvatarImageLastId = nil
+                        getgenv().__fe_avatar_last_id = nil
+                    end
+                    return
+                end
+                local spoofId = tostring(spoofAvatarUserId())
+                if spoofId == ownId then
+                    return
+                end
+                local oldIds = { ownId }
+                if spoofAvatarImageLastId and spoofAvatarImageLastId ~= ownId and spoofAvatarImageLastId ~= spoofId then
+                    oldIds[#oldIds + 1] = spoofAvatarImageLastId
+                end
+                spoofAvatarRewriteImages(spoofId, oldIds)
+                spoofAvatarImageLastId = spoofId
+                getgenv().__fe_avatar_last_id = spoofId
+            end
+
+            local spoofAvatarCloneTargets = setmetatable({}, { __mode = "k" })
+
+            local function spoofAvatarApplyTo(instance)
+                if not instance or instance == spoofPlayer.Character or not instance.Parent then
+                    return
+                end
+                local humanoid = instance:FindFirstChildOfClass("Humanoid")
+                if not humanoid then
+                    return
+                end
+                spoofAvatarCloneTargets[instance] = true
+                local model = spoofAvatarModelFor(spoofAvatarUserId(), humanoid.RigType)
+                if model then
+                    spoofAvatarCopy(model, instance, humanoid)
+                end
+            end
+
+            local function spoofAvatarWatchClone(instance)
+                if not spoofToggle("spoof_avatar") then
+                    return
+                end
+                if not instance:IsA("Model") then
+                    return
+                end
+                local name = instance.Name
+                if name ~= spoofPlayer.Name and name ~= "Player" and name ~= "PlayerPreview" and name ~= "PreviewRig" then
+                    return
+                end
+                if not instance:FindFirstChildOfClass("Humanoid") then
+                    return
+                end
+                spoofTask.spawn(function()
+                    spoofTask.wait()
+                    pcall(spoofAvatarApplyTo, instance)
+                end)
+            end
+
+            do
+                local function hookRoot(root)
+                    if not root then
+                        return
+                    end
+                    root.DescendantAdded:Connect(function(descendant)
+                        if descendant:IsA("Model") then
+                            spoofAvatarWatchClone(descendant)
+                        end
+                    end)
+                    for _, descendant in ipairs(root:GetDescendants()) do
+                        if descendant:IsA("Model") then
+                            spoofAvatarWatchClone(descendant)
                         end
                     end
                 end
-                model:Destroy()
+                pcall(hookRoot, game:GetService("Workspace"))
+                local playerGuiRoot = spoofPlayer:FindFirstChild("PlayerGui")
+                pcall(hookRoot, playerGuiRoot)
             end
-            local spoofAvatarAppliedFor = nil
-            spoofPlayer.CharacterAdded:Connect(function()
-                if spoofToggle("spoof_avatar") then
-                    spoofTask.wait(0.5)
-                    local userId = tonumber(spoofValue("spoof_avatar_userid")) or 1
-                    pcall(spoofApplyAvatar, userId)
+
+            local function spoofAvatarWatchCharacter()
+                local character = spoofPlayer.Character
+                if not character then
+                    return
                 end
-            end)
-            spoofTask.spawn(function()
-                while true do
-                    spoofTask.wait(1)
-                    local userId = tonumber(spoofValue("spoof_avatar_userid")) or 1
-                    if spoofToggle("spoof_avatar") then
-                        if spoofAvatarAppliedFor ~= userId and spoofPlayer.Character then
-                            spoofAvatarAppliedFor = userId
-                            pcall(spoofApplyAvatar, userId)
+                if character:GetAttribute("fe_avatar_char_watched") then
+                    return
+                end
+                character:SetAttribute("fe_avatar_char_watched", true)
+                pcall(function()
+                    character.ChildAdded:Connect(function(child)
+                        if not spoofToggle("spoof_avatar") then
+                            return
                         end
-                    else
-                        spoofAvatarAppliedFor = nil
+                        if child:IsA("Accessory") or child:IsA("Accoutrement") or child:IsA("Shirt") or child:IsA("Pants") or child:IsA("ShirtGraphic") or child:IsA("BodyColors") then
+                            spoofTask.defer(function()
+                                local ok, matched = pcall(spoofAvatarMatches)
+                                if not ok or not matched then
+                                    pcall(spoofAvatarApplyModel, spoofAvatarUserId())
+                                end
+                            end)
+                        end
+                    end)
+                    local head = character:FindFirstChild("Head")
+                    if head and head:IsA("MeshPart") then
+                        head:GetPropertyChangedSignal("MeshId"):Connect(function()
+                            if not spoofToggle("spoof_avatar") then
+                                return
+                            end
+                            spoofTask.defer(function()
+                                local ok, matched = pcall(spoofAvatarMatches)
+                                if not ok or not matched then
+                                    pcall(spoofAvatarApplyModel, spoofAvatarUserId())
+                                end
+                            end)
+                        end)
+                    end
+                end)
+            end
+
+            spoofPlayer.CharacterAdded:Connect(function()
+                spoofTask.spawn(function()
+                    spoofTask.wait()
+                    pcall(spoofAvatarWatchCharacter)
+                    for _ = 1, 60 do
+                        if not spoofToggle("spoof_avatar") then
+                            return
+                        end
+                        local appliedOk, appliedResult = pcall(spoofAvatarApplyModel, spoofAvatarUserId())
+                        if appliedOk and appliedResult then
+                            spoofAvatarPrune(tostring(spoofAvatarUserId()), tostring(spoofPlayer.UserId))
+                            return
+                        end
+                        spoofTask.wait(0.05)
+                    end
+                end)
+            end)
+
+            spoofTask.spawn(function()
+                local wasOn = false
+                while true do
+                    spoofTask.wait(0.1)
+                    local on = spoofToggle("spoof_avatar")
+                    if on then
+                        wasOn = true
+                        local userId = spoofAvatarUserId()
+                        local matchOk, matched = pcall(spoofAvatarMatches)
+                        if not matchOk or not matched then
+                            pcall(spoofAvatarApplyModel, userId)
+                        end
+                        local spoofHeadMesh
+                        do
+                            local cachedModel = spoofAvatarSpool.model[tostring(userId)]
+                            local cachedHead = cachedModel and cachedModel:FindFirstChild("Head")
+                            spoofHeadMesh = cachedHead and cachedHead.MeshId or nil
+                        end
+                        if spoofHeadMesh then
+                            for target in pairs(spoofAvatarCloneTargets) do
+                                if target.Parent then
+                                    local targetHead = target:FindFirstChild("Head")
+                                    if not (targetHead and targetHead:IsA("MeshPart") and targetHead.MeshId == spoofHeadMesh) then
+                                        pcall(spoofAvatarApplyTo, target)
+                                    end
+                                else
+                                    spoofAvatarCloneTargets[target] = nil
+                                end
+                            end
+                        end
+                        pcall(spoofAvatarImages)
+                    elseif wasOn then
+                        wasOn = false
+                        spoofAvatarImageLastId = nil
+                        pcall(spoofAvatarImages)
+                        spoofTask.spawn(function()
+                            for _ = 1, 40 do
+                                if spoofToggle("spoof_avatar") then
+                                    return
+                                end
+                                local restoreOk, restored = pcall(spoofAvatarApplyModel, spoofPlayer.UserId)
+                                if restoreOk and restored then
+                                    spoofAvatarPrune(tostring(spoofPlayer.UserId), nil)
+                                    return
+                                end
+                                spoofTask.wait(0.1)
+                            end
+                        end)
                     end
                 end
             end)
@@ -29640,7 +30501,7 @@ local function directEntry(...)
           if not (not sharedSlot1_23.current) then
             sharedSlot1_23.current = getfenv().pcall
             sharedSlot1_24.current = getfenv().queue_on_teleport
-            sharedSlot1_25.current = "local canCheck = type(isfile) == \"function\";\n\t\tif canCheck and not isfile(\"LOAD_PERSISTENT\") then return end;\n\t\tif canCheck and isfile(\"LOAD_SILENTLY\") then SILENT = true end;\n\t\tlocal okFetch, source = pcall(game.HttpGet, game, \"https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua\");\n\t\tif not okFetch then return end;\n\t\tlocal chunk = (loadstring or load)(source);\n\t\tif chunk then chunk() end;\n\t\t"
+            sharedSlot1_25.current = "local canCheck = type(isfile) == \"function\";\n\t\tif canCheck and not isfile(\"LOAD_PERSISTENT\") then return end;\n\t\tif canCheck and isfile(\"LOAD_SILENTLY\") then SILENT = true end;\n\t\tlocal Players = game:GetService(\"Players\");\n\t\tif not game:IsLoaded() then repeat task.wait(0.25) until game:IsLoaded() end;\n\t\trepeat task.wait(0.25) until Players.LocalPlayer;\n\t\trepeat task.wait(0.25) until Players.LocalPlayer:FindFirstChild(\"PlayerScripts\");\n\t\ttask.wait(0.5);\n\t\tlocal okFetch, source = pcall(game.HttpGet, game, \"https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua\");\n\t\tif not okFetch or type(source) ~= \"string\" then return end;\n\t\tlocal chunk = (loadstring or load)(source);\n\t\tif chunk then pcall(chunk) end;\n\t\t"
             sharedSlot1_23.current(sharedSlot1_24.current, sharedSlot1_25.current)
           end
         end
@@ -31150,7 +32011,7 @@ local function directEntry(...)
             if not (not sharedSlot1_23.current) then
               sharedSlot1_23.current = getfenv().pcall
               sharedSlot1_24.current = getfenv().queue_on_teleport
-              sharedSlot1_25.current = "local canCheck = type(isfile) == \"function\";\n\t\tif canCheck and not isfile(\"LOAD_PERSISTENT\") then return end;\n\t\tif canCheck and isfile(\"LOAD_SILENTLY\") then SILENT = true end;\n\t\tlocal okFetch, source = pcall(game.HttpGet, game, \"https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua\");\n\t\tif not okFetch then return end;\n\t\tlocal chunk = (loadstring or load)(source);\n\t\tif chunk then chunk() end;\n\t\t"
+              sharedSlot1_25.current = "local canCheck = type(isfile) == \"function\";\n\t\tif canCheck and not isfile(\"LOAD_PERSISTENT\") then return end;\n\t\tif canCheck and isfile(\"LOAD_SILENTLY\") then SILENT = true end;\n\t\tlocal Players = game:GetService(\"Players\");\n\t\tif not game:IsLoaded() then repeat task.wait(0.25) until game:IsLoaded() end;\n\t\trepeat task.wait(0.25) until Players.LocalPlayer;\n\t\trepeat task.wait(0.25) until Players.LocalPlayer:FindFirstChild(\"PlayerScripts\");\n\t\ttask.wait(0.5);\n\t\tlocal okFetch, source = pcall(game.HttpGet, game, \"https://raw.githubusercontent.com/FakeProducts/Fake-Enhancements/refs/heads/main/Fake%20Rivals.lua\");\n\t\tif not okFetch or type(source) ~= \"string\" then return end;\n\t\tlocal chunk = (loadstring or load)(source);\n\t\tif chunk then pcall(chunk) end;\n\t\t"
               sharedSlot1_23.current(sharedSlot1_24.current, sharedSlot1_25.current)
             end
           end
@@ -43520,11 +44381,81 @@ local function directEntry(...)
                             local movementFlyKeybind = Options.movement_flykeybind
                             local character = capturedValue1.characters[capturedValue2]
                             local forcedCFrame = nil
+                            if capturedValue7.TouchEnabled and not capturedValue7.KeyboardEnabled and not getgenv().__fe_fly_pad then
+                                local padGui = Instance.new("ScreenGui")
+                                padGui.Name = "fe_fly_pad"
+                                padGui.ResetOnSpawn = false
+                                padGui.IgnoreGuiInset = true
+                                padGui.DisplayOrder = 99
+                                local padState = { on = false, up = false, down = false, gui = padGui }
+                                local flyButton
+                                local upButton
+                                local downButton
+                                local function makePadButton(text, offsetY, startVisible)
+                                    local button = Instance.new("TextButton")
+                                    button.Size = UDim2.fromOffset(54, 54)
+                                    button.Position = UDim2.new(1, -76, 0.5, offsetY)
+                                    button.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
+                                    button.BackgroundTransparency = 0.2
+                                    button.TextColor3 = Color3.fromRGB(255, 255, 255)
+                                    button.Font = Enum.Font.GothamBold
+                                    button.TextSize = 15
+                                    button.Text = text
+                                    button.AutoButtonColor = true
+                                    button.Visible = startVisible
+                                    button.Parent = padGui
+                                    local corner = Instance.new("UICorner")
+                                    corner.CornerRadius = UDim.new(0, 8)
+                                    corner.Parent = button
+                                    return button
+                                end
+                                flyButton = makePadButton("FLY", -60, true)
+                                upButton = makePadButton("^", -122, false)
+                                downButton = makePadButton("v", -4, false)
+                                local function refreshPad()
+                                    upButton.Visible = padState.on
+                                    downButton.Visible = padState.on
+                                    flyButton.BackgroundColor3 = padState.on and Color3.fromRGB(0, 110, 255) or Color3.fromRGB(22, 22, 26)
+                                end
+                                local function isPadPress(input)
+                                    return input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1
+                                end
+                                flyButton.InputBegan:Connect(function(input)
+                                    if isPadPress(input) then
+                                        padState.on = not padState.on
+                                        refreshPad()
+                                    end
+                                end)
+                                upButton.InputBegan:Connect(function(input)
+                                    if isPadPress(input) then
+                                        padState.up = true
+                                    end
+                                end)
+                                downButton.InputBegan:Connect(function(input)
+                                    if isPadPress(input) then
+                                        padState.down = true
+                                    end
+                                end)
+                                local function releaseVertical(input)
+                                    if isPadPress(input) then
+                                        padState.up = false
+                                        padState.down = false
+                                    end
+                                end
+                                upButton.InputEnded:Connect(releaseVertical)
+                                downButton.InputEnded:Connect(releaseVertical)
+                                padGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+                                refreshPad()
+                                getgenv().__fe_fly_pad = padState
+                            end
                             trackRuntimeConnection(capturedValue3.Heartbeat:Connect(function(deltaTime, ...)
                                 local rootPart = character.HumanoidRootPart
                                 local humanoid = character.Humanoid
                                 if not rootPart or not humanoid then return end
-                                if capturedValue1.current_vehicle or not movementFlyToggle.Value or not movementFlyKeybind:GetState() then
+                                local mobilePad = getgenv().__fe_fly_pad
+                                local mobileFly = capturedValue7.TouchEnabled and not capturedValue7.KeyboardEnabled
+                                local flyActive = movementFlyKeybind:GetState() or (mobileFly and mobilePad and mobilePad.on)
+                                if capturedValue1.current_vehicle or not movementFlyToggle.Value or not flyActive then
                                     if forcedCFrame then
                                         forcedCFrame = nil
                                         local _, yaw = rootPart.CFrame:ToOrientation()
@@ -43539,6 +44470,15 @@ local function directEntry(...)
                                 local cameraCFrame = capturedValue6.CFrame
                                 local movement = Vector3.zero
                                 if not capturedValue7:GetFocusedTextBox() then
+                                    if mobileFly then
+                                        movement = movement + cameraCFrame.LookVector
+                                        if mobilePad and mobilePad.up then
+                                            movement = movement + Vector3.yAxis
+                                        end
+                                        if mobilePad and mobilePad.down then
+                                            movement = movement - Vector3.yAxis
+                                        end
+                                    else
                                     local moveForward = capturedValue7:IsKeyDown("W")
                                     local moveLeft = capturedValue7:IsKeyDown("A")
                                     local moveBackward = capturedValue7:IsKeyDown("S")
@@ -43551,6 +44491,7 @@ local function directEntry(...)
                                     if moveRight then movement = movement + cameraCFrame.RightVector end
                                     if moveUp then movement = movement + Vector3.yAxis end
                                     if moveDown then movement = movement - Vector3.yAxis end
+                                    end
                                 end
                                 local displacement = movement.Unit * deltaTime * movementFlyAmount.Value
                                 if displacement ~= displacement then displacement = Vector3.zero end
@@ -49959,16 +50900,23 @@ local function directEntry(...)
                     do
                         local antiAimTarget = sharedSlot1_134.current
                         local antiAimEncode = antiAimTarget.EncodeCameraRotation
-                        if type(antiAimEncode) == "function" and not getgenv().__fe_aa_watch then
-                            getgenv().__fe_aa_watch = true
-                            getfenv().task.spawn(function()
-                                while true do
-                                    getfenv().task.wait(1)
-                                    if antiAimTarget.EncodeCameraRotation ~= antiAimEncode then
-                                        pcall(rawset, antiAimTarget, "EncodeCameraRotation", antiAimEncode)
+                        if type(antiAimEncode) == "function" then
+                            local watched = getgenv().__fe_aa_watched
+                            if type(watched) ~= "table" then
+                                watched = setmetatable({}, { __mode = "k" })
+                                getgenv().__fe_aa_watched = watched
+                            end
+                            if not watched[antiAimTarget] then
+                                watched[antiAimTarget] = antiAimEncode
+                                getfenv().task.spawn(function()
+                                    while true do
+                                        getfenv().task.wait(0.5)
+                                        if antiAimTarget.EncodeCameraRotation ~= antiAimEncode then
+                                            pcall(rawset, antiAimTarget, "EncodeCameraRotation", antiAimEncode)
+                                        end
                                     end
-                                end
-                            end)
+                                end)
+                            end
                         end
                     end
                     sharedSlot1_135.current = {}
@@ -50897,6 +51845,7 @@ local function directEntry(...)
                                                                                           localSlot157_3.Size = localSlot157_4
                                                                                           localSlot157_1 = localSlot157_1(localSlot157_2, localSlot157_3)
                                                                                           getfenv().getgenv().__fe_changer_popout = localSlot157_1
+                                                                                          pcall(function() getgenv().__fe_fit_popout_soon(localSlot157_1) end)
                                                                                           localSlot157_2 = nil
                                                                                           localSlot157_3 = nil
                                                                                           localSlot157_4 = nil
