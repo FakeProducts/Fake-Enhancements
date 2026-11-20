@@ -26266,11 +26266,7 @@ local function directEntry(...)
             if type(queue_on_teleport) ~= 'function' then
                 return
             end
-            if game.PlaceId ~= 17625359962 then
-                return
-            end
             pcall(queue_on_teleport, [==[
-if game.PlaceId ~= 17625359962 then return end
 if type(isfile) == "function" and not isfile("LOAD_PERSISTENT") then return end
 local Players = game:GetService("Players")
 if not game:IsLoaded() then repeat task.wait(0.25) until game:IsLoaded() end
@@ -26967,7 +26963,7 @@ if chunk then pcall(chunk) end
             local spoofLastNameState
             spoofTask.spawn(function()
                 while true do
-                    spoofTask.wait(0.1)
+                    spoofTask.wait(0.25)
                     pcall(spoofBadgeSync)
                     pcall(spoofApplyLabels)
                     local nameState = tostring(spoofToggle("name_spoofer")) .. "|" .. tostring(spoofValue("name_spoofer_name")) .. "|" .. tostring(spoofToggle("name_spoof_others")) .. "|" .. tostring(spoofValue("name_spoof_others_name"))
@@ -27057,13 +27053,16 @@ if chunk then pcall(chunk) end
                     end)
                 end)
             end
-            spoofRun.Heartbeat:Connect(function()
-                for _, entry in ipairs(spoofAttributeEntries) do
-                    if spoofToggle(entry.toggle) then
-                        spoofApplyAttribute(entry)
-                    elseif entry.applied then
-                        spoofPlayer:SetAttribute(entry.attribute, entry.original)
-                        entry.applied = false
+            spoofTask.spawn(function()
+                while true do
+                    spoofTask.wait(0.5)
+                    for _, entry in ipairs(spoofAttributeEntries) do
+                        if spoofToggle(entry.toggle) then
+                            pcall(spoofApplyAttribute, entry)
+                        elseif entry.applied then
+                            spoofPlayer:SetAttribute(entry.attribute, entry.original)
+                            entry.applied = false
+                        end
                     end
                 end
             end)
@@ -27134,7 +27133,7 @@ if chunk then pcall(chunk) end
                 return model
             end
 
-            local function spoofAvatarCopy(model, character, humanoid)
+            local function spoofAvatarCopy(model, character, humanoid, restoreOwn)
                 if not (model and character and humanoid) then
                     return false
                 end
@@ -27206,8 +27205,53 @@ if chunk then pcall(chunk) end
                 end
                 local newHead = model:FindFirstChild("Head")
                 local head = character:FindFirstChild("Head")
-                if newHead and head and newHead:IsA("MeshPart") and head:IsA("MeshPart") then
-                    pcall(head.ApplyMesh, head, newHead)
+                if newHead and head and head:IsA("MeshPart") then
+                    local orig = getgenv().__fe_avatar_head_orig
+                    if not orig then
+                        local origFace = head:FindFirstChild("Decal")
+                        orig = {
+                            mesh = head.MeshId,
+                            tex = head.TextureID,
+                            size = head.Size,
+                            face = origFace and origFace.Texture or "",
+                        }
+                        getgenv().__fe_avatar_head_orig = orig
+                    end
+                    if restoreOwn then
+                        pcall(function()
+                            head.MeshId = orig.mesh
+                            head.TextureID = orig.tex or ""
+                            head.Size = orig.size
+                        end)
+                    elseif newHead:IsA("MeshPart") then
+                        if pcall(head.ApplyMesh, head, newHead) then
+                            pcall(function()
+                                if (newHead.TextureID or "") == "" then
+                                    head.TextureID = orig.tex or ""
+                                end
+                                head.Size = orig.size
+                            end)
+                        end
+                    end
+                    if orig.face ~= "" then
+                        local face = head:FindFirstChild("Decal")
+                        if face then
+                            pcall(function()
+                                if face.Texture ~= orig.face then
+                                    face.Texture = orig.face
+                                end
+                                face.Transparency = 0
+                            end)
+                        else
+                            local okDecal, newDecal = pcall(Instance.new, "Decal")
+                            if okDecal and newDecal then
+                                newDecal.Name = "Decal"
+                                newDecal.Texture = orig.face
+                                newDecal.Face = Enum.NormalId.Front
+                                newDecal.Parent = head
+                            end
+                        end
+                    end
                 end
                 return true
             end
@@ -27225,7 +27269,7 @@ if chunk then pcall(chunk) end
                 if not model then
                     return false
                 end
-                return spoofAvatarCopy(model, character, humanoid)
+                return spoofAvatarCopy(model, character, humanoid, userId == spoofPlayer.UserId)
             end
 
             local function spoofAvatarExpected()
@@ -27303,6 +27347,10 @@ if chunk then pcall(chunk) end
                 if type(img) ~= "string" or img == "" then
                     return
                 end
+                if lbl:GetAttribute("fe_avatar_src") == img then
+                    return
+                end
+                lbl:SetAttribute("fe_avatar_src", img)
                 local swapped = img
                 for _, oldId in ipairs({ ownId, spoofAvatarImageLastId or "" }) do
                     if oldId ~= "" and swapped:find(oldId, 1, true) then
@@ -27352,9 +27400,6 @@ if chunk then pcall(chunk) end
                     end
                     playerGui.DescendantAdded:Connect(function(d)
                         spoofAvatarHookImage(d)
-                        for _, child in ipairs(d:GetDescendants()) do
-                            spoofAvatarHookImage(child)
-                        end
                     end)
                 end
             end
@@ -27402,6 +27447,9 @@ if chunk then pcall(chunk) end
                 end
                 local spoofId = tostring(spoofAvatarUserId())
                 if spoofId == ownId then
+                    return
+                end
+                if spoofAvatarImageLastId == spoofId then
                     return
                 end
                 local oldIds = { ownId }
@@ -27532,7 +27580,7 @@ if chunk then pcall(chunk) end
             spoofTask.spawn(function()
                 local wasOn = false
                 while true do
-                    spoofTask.wait(0.1)
+                    spoofTask.wait(0.3)
                     local on = spoofToggle("spoof_avatar")
                     if on then
                         wasOn = true
@@ -44414,33 +44462,58 @@ if chunk then pcall(chunk) end
                                 padGui.IgnoreGuiInset = true
                                 padGui.DisplayOrder = 99
                                 local padState = { on = false, up = false, down = false, gui = padGui }
-                                local flyButton
-                                local upButton
-                                local downButton
-                                local function makePadButton(text, offsetY, startVisible)
-                                    local button = Instance.new("TextButton")
-                                    button.Size = UDim2.fromOffset(54, 54)
-                                    button.Position = UDim2.new(1, -76, 0.5, offsetY)
-                                    button.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
-                                    button.BackgroundTransparency = 0.2
-                                    button.TextColor3 = Color3.fromRGB(255, 255, 255)
-                                    button.Font = Enum.Font.GothamBold
-                                    button.TextSize = 15
-                                    button.Text = text
-                                    button.AutoButtonColor = true
-                                    button.Visible = startVisible
-                                    button.Parent = padGui
-                                    local corner = Instance.new("UICorner")
-                                    corner.CornerRadius = UDim.new(0, 8)
-                                    corner.Parent = button
-                                    return button
+                                local padJump = getgenv().__fe_fly_jump
+                                if not padJump then
+                                    padJump = { hold = 0 }
+                                    getgenv().__fe_fly_jump = padJump
+                                    capturedValue7.JumpRequest:Connect(function()
+                                        padJump.hold = os.clock() + 0.3
+                                    end)
                                 end
-                                flyButton = makePadButton("FLY", -60, true)
-                                upButton = makePadButton("^", -122, false)
-                                downButton = makePadButton("v", -4, false)
+                                if not getgenv().__fe_fly_movevector then
+                                    getgenv().__fe_fly_movevector = function()
+                                        local controls = getgenv().__fe_player_controls
+                                        if not controls then
+                                            local scripts = game:GetService("Players").LocalPlayer:FindFirstChild("PlayerScripts")
+                                            local module = scripts and scripts:FindFirstChild("PlayerModule")
+                                            if not module then
+                                                return nil
+                                            end
+                                            local okReq, loaded = pcall(require, module)
+                                            if not okReq or type(loaded) ~= "table" then
+                                                return nil
+                                            end
+                                            local okCtl, got = pcall(function()
+                                                return loaded:GetControls()
+                                            end)
+                                            if not okCtl or not got then
+                                                return nil
+                                            end
+                                            controls = got
+                                            getgenv().__fe_player_controls = got
+                                        end
+                                        local okVec, vec = pcall(controls.GetMoveVector, controls)
+                                        if okVec and typeof(vec) == "Vector3" then
+                                            return vec
+                                        end
+                                        return nil
+                                    end
+                                end
+                                local flyButton = Instance.new("TextButton")
+                                flyButton.Size = UDim2.fromOffset(54, 54)
+                                flyButton.Position = UDim2.new(1, -76, 0.5, -60)
+                                flyButton.BackgroundColor3 = Color3.fromRGB(22, 22, 26)
+                                flyButton.BackgroundTransparency = 0.2
+                                flyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+                                flyButton.Font = Enum.Font.GothamBold
+                                flyButton.TextSize = 15
+                                flyButton.Text = "FLY"
+                                flyButton.AutoButtonColor = true
+                                flyButton.Parent = padGui
+                                local flyCorner = Instance.new("UICorner")
+                                flyCorner.CornerRadius = UDim.new(0, 8)
+                                flyCorner.Parent = flyButton
                                 local function refreshPad()
-                                    upButton.Visible = padState.on
-                                    downButton.Visible = padState.on
                                     flyButton.BackgroundColor3 = padState.on and Color3.fromRGB(0, 110, 255) or Color3.fromRGB(22, 22, 26)
                                 end
                                 local function isPadPress(input)
@@ -44452,24 +44525,6 @@ if chunk then pcall(chunk) end
                                         refreshPad()
                                     end
                                 end)
-                                upButton.InputBegan:Connect(function(input)
-                                    if isPadPress(input) then
-                                        padState.up = true
-                                    end
-                                end)
-                                downButton.InputBegan:Connect(function(input)
-                                    if isPadPress(input) then
-                                        padState.down = true
-                                    end
-                                end)
-                                local function releaseVertical(input)
-                                    if isPadPress(input) then
-                                        padState.up = false
-                                        padState.down = false
-                                    end
-                                end
-                                upButton.InputEnded:Connect(releaseVertical)
-                                downButton.InputEnded:Connect(releaseVertical)
                                 padGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
                                 refreshPad()
                                 getgenv().__fe_fly_pad = padState
@@ -44497,12 +44552,13 @@ if chunk then pcall(chunk) end
                                 local movement = Vector3.zero
                                 if not capturedValue7:GetFocusedTextBox() then
                                     if mobileFly then
-                                        movement = movement + cameraCFrame.LookVector
-                                        if mobilePad and mobilePad.up then
-                                            movement = movement + Vector3.yAxis
+                                        local moveVector = getgenv().__fe_fly_movevector and getgenv().__fe_fly_movevector()
+                                        if moveVector and moveVector.Magnitude > 0 then
+                                            movement = cameraCFrame:VectorToWorldSpace(moveVector)
                                         end
-                                        if mobilePad and mobilePad.down then
-                                            movement = movement - Vector3.yAxis
+                                        local jumpHold = getgenv().__fe_fly_jump and getgenv().__fe_fly_jump.hold or 0
+                                        if os.clock() < jumpHold or humanoid.Jump then
+                                            movement = movement + Vector3.yAxis
                                         end
                                     else
                                     local moveForward = capturedValue7:IsKeyDown("W")
